@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Application</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="chat-container">
+        <div id="chat-box" class="chat-box">
+            <!-- Messages will appear here -->
+        </div>
+        <div class="input-container">
+            <label for="file-input" class="file-upload-label">
+                <img src="https://static.vecteezy.com/system/resources/previews/022/951/451/non_2x/stack-of-documents-icon-png.png" alt="Upload" class="upload-icon">
+            </label>
+            <input type="file" id="file-input" class="file-input" accept="image/*, .pdf, .doc, .docx" />
+            <label for="console-button" class="console-label">
+                <img src="https://cdn.iconscout.com/icon/premium/png-512-thumb/terminal-4887897-4072433.png?f=webp&w=256" alt="Console" class="console-icon">
+            </label>
+            <textarea id="message-input" class="message-input" placeholder="Type your message..."></textarea>
+            <button id="send-button" class="send-button">Send</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
