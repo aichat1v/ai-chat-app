@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "server/server.js",  // Update with correct path
   "scripts": {
-    "start": "node src/server.js",  // Ensure this line matches your file location
+    "start": "node server/server.js",  // Ensure this line matches your file location
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
