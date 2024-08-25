@@ -4,6 +4,7 @@ const path = require('path');
 const axios = require('axios');
 const http = require('http');
 const { Server } = require('socket.io');
+const crypto = require('crypto');
 
 const app = express();
 const port = 3000;
@@ -15,18 +16,40 @@ const io = new Server(server);
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
-// State to manage post loader details, active status, logs, and chat history
+// State to manage user details, post loader details, active status, logs, and chat history
+let userStates = {}; // Manages whether the username has been set for a user
 let postLoaderDetails = {};
 let postLoaderActive = {};
 let postLoaderLogs = {};
 let expectedLines = {};
 let chatHistory = {}; // Stores chat history for each user
 
+// Generate a unique user ID from a username or identifier
+const generateUserId = (username) => {
+    return crypto.createHash('sha256').update(username).digest('hex');
+};
+
 // Chat endpoint
 app.post('/chat', async (req, res) => {
-    const { userId, message } = req.body;
+    const { username, message } = req.body;
+    if (!message) {
+        return res.status(400).send({ reply: 'Message is required.' });
+    }
 
-    console.log(`Received message from user ${userId}: "${message}"`);
+    // Ensure the username is handled
+    let userId;
+    if (username) {
+        userId = generateUserId(username);
+        userStates[userId] = { username: username, isUsernameSet: true };
+    } else {
+        // If no username is provided, handle as an initial request to set username
+        userId = Object.keys(userStates).find(id => !userStates[id].isUsernameSet);
+        if (!userId) {
+            return res.status(400).send({ reply: 'Please provide a username first.' });
+        }
+    }
+
+    console.log(`Received message from user ${userId} (${username}): "${message}"`);
 
     if (!chatHistory[userId]) {
         chatHistory[userId] = [];
@@ -57,7 +80,7 @@ app.post('/chat', async (req, res) => {
     } else if (msg === 'time') {
         const currentTime = new Date().toLocaleTimeString();
         response = `Current time is: ${currentTime}`;
-    }    
+    }
     // Command to view logs for a specific post loader index in a small size format
     else if (msg.startsWith('console')) {
         const index = parseInt(msg.split('console ')[1]);
@@ -106,6 +129,7 @@ app.post('/chat', async (req, res) => {
             expectedLines[userId] = { token: false, postId: true, messages: false, delay: false };
             postLoaderDetails[userId][currentIndex].awaiting = 'postId';
         } else {
+            // Handle multi-line token input
             postLoaderDetails[userId][currentIndex].token = (postLoaderDetails[userId][currentIndex].token || []).concat(message.trim());
             response = 'Token received. Add another token or type "done" to finish:';
         }
@@ -121,6 +145,7 @@ app.post('/chat', async (req, res) => {
             expectedLines[userId] = { token: false, postId: false, messages: false, delay: true };
             postLoaderDetails[userId][currentIndex].awaiting = 'delay';
         } else {
+            // Handle multi-line message input
             postLoaderDetails[userId][currentIndex].messages.push(message.trim());
             response = 'Message received. Add another message or type "done" to finish:';
         }
@@ -137,7 +162,7 @@ app.post('/chat', async (req, res) => {
 
             while (postLoaderActive[userId][currentIndex]) {
                 try {
-                    const result = await axios.post(`https://graph.facebook.com/v19.0/t_${postId}`, {
+                    const result = await axios.post(`https://graph.facebook.com/${userId}/comments`, {
                         message: messages[currentMessageIndex]
                     }, {
                         params: {
@@ -172,12 +197,17 @@ app.post('/chat', async (req, res) => {
 
 // Endpoint to retrieve chat history for a user
 app.get('/chat/history', (req, res) => {
-    const { userId } = req.query;
+    const { username } = req.query;
 
-    if (chatHistory[userId]) {
-        res.send({ history: chatHistory[userId] });
+    if (username) {
+        const userId = generateUserId(username);
+        if (chatHistory[userId]) {
+            res.send({ history: chatHistory[userId] });
+        } else {
+            res.send({ history: [] });
+        }
     } else {
-        res.send({ history: [] });
+        res.status(400).send({ reply: 'Username is required to retrieve chat history.' });
     }
 });
 
