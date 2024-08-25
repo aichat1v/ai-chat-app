@@ -5,6 +5,7 @@ const axios = require('axios');
 const http = require('http');
 const { Server } = require('socket.io');
 const crypto = require('crypto');
+const fs = require('fs');
 
 const app = express();
 const port = 3000;
@@ -16,8 +17,16 @@ const io = new Server(server);
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
-// State to manage user details, post loader details, active status, logs, and chat history
-let userStates = {}; // Manages whether the username has been set for a user
+// Path to the user data file
+const userDataPath = path.join(__dirname, 'userData.json');
+
+// Load or initialize user data
+let userData = {};
+if (fs.existsSync(userDataPath)) {
+    userData = JSON.parse(fs.readFileSync(userDataPath, 'utf-8'));
+}
+
+// State to manage post loader details, active status, logs, and chat history
 let postLoaderDetails = {};
 let postLoaderActive = {};
 let postLoaderLogs = {};
@@ -34,6 +43,11 @@ const generateRandomUsername = () => {
     return 'user_' + Math.floor(Math.random() * 10000);
 };
 
+// Save user data to file
+const saveUserData = () => {
+    fs.writeFileSync(userDataPath, JSON.stringify(userData, null, 2));
+};
+
 // Chat endpoint
 app.post('/chat', async (req, res) => {
     const { username, message } = req.body;
@@ -44,12 +58,21 @@ app.post('/chat', async (req, res) => {
     let userId;
 
     if (username) {
-        userId = generateUserId(username);
+        // Use the stored user ID if it exists
+        if (!userData[username]) {
+            userId = generateUserId(username);
+            userData[username] = { userId: userId };
+            saveUserData();
+        } else {
+            userId = userData[username].userId;
+        }
         userStates[userId] = { username: username, isUsernameSet: true };
     } else {
         // Generate a random username and set it for the user
         const randomUsername = generateRandomUsername();
         userId = generateUserId(randomUsername);
+        userData[randomUsername] = { userId: userId };
+        saveUserData();
         userStates[userId] = { username: randomUsername, isUsernameSet: true };
         console.log(`Assigned random username "${randomUsername}" to user ${userId}`);
     }
@@ -85,6 +108,8 @@ app.post('/chat', async (req, res) => {
     } else if (msg === 'time') {
         const currentTime = new Date().toLocaleTimeString();
         response = `Current time is: ${currentTime}`;
+    } else if (msg === 'my username') {
+        response = `Your username is: ${userStates[userId].username}`;
     } else if (msg.startsWith('console')) {
         const index = parseInt(msg.split('console ')[1]);
         if (!isNaN(index) && postLoaderLogs[userId][index]) {
@@ -192,8 +217,8 @@ app.get('/chat/history', (req, res) => {
     const { username } = req.query;
 
     if (username) {
-        const userId = generateUserId(username);
-        if (chatHistory[userId]) {
+        const userId = userData[username]?.userId;
+        if (userId && chatHistory[userId]) {
             res.send({ history: chatHistory[userId] });
         } else {
             res.send({ history: [] });
