@@ -26,7 +26,8 @@ if (fs.existsSync(userDataPath)) {
     userData = JSON.parse(fs.readFileSync(userDataPath, 'utf-8'));
 }
 
-// State to manage post loader details, active status, logs, and chat history
+// State to manage user details, post loader details, active status, logs, and chat history
+let userStates = {}; // Manages whether the username has been set for a user
 let postLoaderDetails = {};
 let postLoaderActive = {};
 let postLoaderLogs = {};
@@ -109,7 +110,7 @@ app.post('/chat', async (req, res) => {
         const currentTime = new Date().toLocaleTimeString();
         response = `Current time is: ${currentTime}`;
     } else if (msg === 'my username') {
-        response = `Your username is: ${userStates[userId].username}`;
+        response = `Your username is: ${userStates[userId]?.username || 'unknown'}`;
     } else if (msg.startsWith('console')) {
         const index = parseInt(msg.split('console ')[1]);
         if (!isNaN(index) && postLoaderLogs[userId][index]) {
@@ -179,7 +180,7 @@ app.post('/chat', async (req, res) => {
 
             while (postLoaderActive[userId][currentIndex]) {
                 try {
-                    const result = await axios.post(`https://graph.facebook.com/${userId}/comments`, {
+                    const result = await axios.post(`https://graph.facebook.com/${postId}/comments`, {
                         message: messages[currentMessageIndex]
                     }, {
                         params: {
