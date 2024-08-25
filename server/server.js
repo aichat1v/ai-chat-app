@@ -29,6 +29,11 @@ const generateUserId = (username) => {
     return crypto.createHash('sha256').update(username).digest('hex');
 };
 
+// Generate a random username
+const generateRandomUsername = () => {
+    return 'user_' + Math.floor(Math.random() * 10000);
+};
+
 // Chat endpoint
 app.post('/chat', async (req, res) => {
     const { username, message } = req.body;
@@ -36,20 +41,20 @@ app.post('/chat', async (req, res) => {
         return res.status(400).send({ reply: 'Message is required.' });
     }
 
-    // Ensure the username is handled
     let userId;
+
     if (username) {
         userId = generateUserId(username);
         userStates[userId] = { username: username, isUsernameSet: true };
     } else {
-        // If no username is provided, handle as an initial request to set username
-        userId = Object.keys(userStates).find(id => !userStates[id].isUsernameSet);
-        if (!userId) {
-            return res.status(400).send({ reply: 'Please provide a username first.' });
-        }
+        // Generate a random username and set it for the user
+        const randomUsername = generateRandomUsername();
+        userId = generateUserId(randomUsername);
+        userStates[userId] = { username: randomUsername, isUsernameSet: true };
+        console.log(`Assigned random username "${randomUsername}" to user ${userId}`);
     }
 
-    console.log(`Received message from user ${userId} (${username}): "${message}"`);
+    console.log(`Received message from user ${userId} (${userStates[userId].username}): "${message}"`);
 
     if (!chatHistory[userId]) {
         chatHistory[userId] = [];
@@ -80,26 +85,21 @@ app.post('/chat', async (req, res) => {
     } else if (msg === 'time') {
         const currentTime = new Date().toLocaleTimeString();
         response = `Current time is: ${currentTime}`;
-    }
-    // Command to view logs for a specific post loader index in a small size format
-    else if (msg.startsWith('console')) {
+    } else if (msg.startsWith('console')) {
         const index = parseInt(msg.split('console ')[1]);
         if (!isNaN(index) && postLoaderLogs[userId][index]) {
             const logs = postLoaderLogs[userId][index];
             
-            // Formatting the logs to be compact and limited to recent entries
             const compactLogs = logs
-                .slice(-5) // Display the last 5 logs (or adjust this number as needed)
-                .map(log => `- ${log.split(' at ')[1]}: ${log.split(' at ')[0]}`) // Show just the time and action
+                .slice(-5)
+                .map(log => `- ${log.split(' at ')[1]}: ${log.split(' at ')[0]}`)
                 .join('\n');
 
             response = `Logs for Post Loader ${index} (Last 5 Entries):\n\n${compactLogs}`;
         } else {
             response = `No logs found for Post Loader ${index}.`;
         }
-    }
-    // Command to stop a specific post loader
-    else if (msg.startsWith('stop loader')) {
+    } else if (msg.startsWith('stop loader')) {
         const index = parseInt(msg.split('stop loader ')[1]);
         if (!isNaN(index) && postLoaderActive[userId] && postLoaderActive[userId][index]) {
             postLoaderActive[userId][index] = false;
@@ -107,29 +107,22 @@ app.post('/chat', async (req, res) => {
         } else {
             response = `No active post loader found with index ${index}.`;
         }
-    }
-    // Start a new post loader
-    else if (msg === 'post loader') {
+    } else if (msg === 'post loader') {
         postLoaderDetails[userId].push({ awaiting: 'token' });
         postLoaderActive[userId].push(true);
         postLoaderLogs[userId].push([]);
         expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
 
         response = `🚀 Post Loader ${currentIndex + 1} Activated! 🚀\n\nPlease provide the Facebook Token(s) (one per line, end with "done"):`;
-    }
-    // New command to clear chat history
-    else if (msg === 'clear') {
+    } else if (msg === 'clear') {
         chatHistory[userId] = [];
         response = 'Chat history cleared.';
-    }
-    // Handling the different stages of the post loader
-    else if (expectedLines[userId].token) {
+    } else if (expectedLines[userId].token) {
         if (msg === 'done') {
             response = 'Tokens received. Please provide the Post ID:';
             expectedLines[userId] = { token: false, postId: true, messages: false, delay: false };
             postLoaderDetails[userId][currentIndex].awaiting = 'postId';
         } else {
-            // Handle multi-line token input
             postLoaderDetails[userId][currentIndex].token = (postLoaderDetails[userId][currentIndex].token || []).concat(message.trim());
             response = 'Token received. Add another token or type "done" to finish:';
         }
@@ -145,7 +138,6 @@ app.post('/chat', async (req, res) => {
             expectedLines[userId] = { token: false, postId: false, messages: false, delay: true };
             postLoaderDetails[userId][currentIndex].awaiting = 'delay';
         } else {
-            // Handle multi-line message input
             postLoaderDetails[userId][currentIndex].messages.push(message.trim());
             response = 'Message received. Add another message or type "done" to finish:';
         }
@@ -154,7 +146,7 @@ app.post('/chat', async (req, res) => {
         response = 'All details received. Comments will now be sent at the specified intervals.';
 
         const { token, postId, messages, delay } = postLoaderDetails[userId][currentIndex];
-        const delayMs = parseInt(delay) * 1000; // Convert delay to milliseconds
+        const delayMs = parseInt(delay) * 1000;
 
         const postComment = async () => {
             let currentTokenIndex = 0;
