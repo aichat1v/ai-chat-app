@@ -6,18 +6,21 @@ const http = require('http');
 const { Server } = require('socket.io');
 const crypto = require('crypto');
 const fs = require('fs');
+const cookieParser = require('cookie-parser');
+const uuid = require('uuid');
 
+// Initialize app and server
 const app = express();
 const port = 3000;
-
 const server = http.createServer(app);
 const io = new Server(server);
 
 // Middleware
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, '../public')));
+app.use(cookieParser());
 
-// Path to the user data file
+// Path to user data file
 const userDataPath = path.join(__dirname, 'userData.json');
 
 // Load or initialize user data
@@ -27,12 +30,12 @@ if (fs.existsSync(userDataPath)) {
 }
 
 // State to manage user details, post loader details, active status, logs, and chat history
-let userStates = {}; // Manages whether the username has been set for a user
+let userStates = {}; 
 let postLoaderDetails = {};
 let postLoaderActive = {};
 let postLoaderLogs = {};
 let expectedLines = {};
-let chatHistory = {}; // Stores chat history for each user
+let chatHistory = {}; 
 
 // Generate a unique user ID from a username or identifier
 const generateUserId = (username) => {
@@ -49,6 +52,15 @@ const saveUserData = () => {
     fs.writeFileSync(userDataPath, JSON.stringify(userData, null, 2));
 };
 
+// Middleware to handle session
+const getUserIdFromCookie = (req) => {
+    const sessionId = req.cookies.sessionId;
+    if (sessionId && userData[sessionId]) {
+        return userData[sessionId].userId;
+    }
+    return null;
+};
+
 // Chat endpoint
 app.post('/chat', async (req, res) => {
     const { username, message } = req.body;
@@ -56,26 +68,32 @@ app.post('/chat', async (req, res) => {
         return res.status(400).send({ reply: 'Message is required.' });
     }
 
-    let userId;
+    let userId = getUserIdFromCookie(req);
 
-    if (username) {
-        // Use the stored user ID if it exists
-        if (!userData[username]) {
+    if (!userId) {
+        // Handle new session
+        const sessionId = uuid.v4();
+        let newUsername;
+
+        if (username) {
+            newUsername = username;
             userId = generateUserId(username);
-            userData[username] = { userId: userId };
-            saveUserData();
         } else {
-            userId = userData[username].userId;
+            newUsername = generateRandomUsername();
+            userId = generateUserId(newUsername);
         }
-        userStates[userId] = { username: username, isUsernameSet: true };
-    } else {
-        // Generate a random username and set it for the user
-        const randomUsername = generateRandomUsername();
-        userId = generateUserId(randomUsername);
-        userData[randomUsername] = { userId: userId };
+
+        userData[sessionId] = { userId: userId, username: newUsername };
         saveUserData();
-        userStates[userId] = { username: randomUsername, isUsernameSet: true };
-        console.log(`Assigned random username "${randomUsername}" to user ${userId}`);
+
+        res.cookie('sessionId', sessionId, { httpOnly: true });
+        userStates[userId] = { username: newUsername, isUsernameSet: true };
+    } else {
+        // Existing session
+        const usernameFromData = Object.keys(userData).find(key => userData[key].userId === userId);
+        if (usernameFromData) {
+            userStates[userId] = { username: userData[usernameFromData].username, isUsernameSet: true };
+        }
     }
 
     console.log(`Received message from user ${userId} (${userStates[userId].username}): "${message}"`);
@@ -97,7 +115,6 @@ app.post('/chat', async (req, res) => {
 
     const currentIndex = postLoaderDetails[userId].length - 1;
 
-    // Handling predefined commands
     if (msg === 'owner name') {
         response = 'The owner of this bot is Jerry.';
     } else if (msg === 'hlo aap kaise ho') {
@@ -180,7 +197,7 @@ app.post('/chat', async (req, res) => {
 
             while (postLoaderActive[userId][currentIndex]) {
                 try {
-                    const result = await axios.post(`https://graph.facebook.com/${postId}/comments`, {
+                    const result = await axios.post(`https://graph.facebook.com/${userId}/comments`, {
                         message: messages[currentMessageIndex]
                     }, {
                         params: {
