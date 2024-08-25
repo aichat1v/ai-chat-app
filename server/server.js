@@ -15,17 +15,23 @@ const io = new Server(server);
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
-// State to manage post loader details, active status, and logs
+// State to manage post loader details, active status, logs, and chat history
 let postLoaderDetails = {};
 let postLoaderActive = {};
-let postLoaderLogs = {}; // Stores log messages for each post loader
-let expectedLines = {}; // To keep track of expected lines for each user
+let postLoaderLogs = {};
+let expectedLines = {};
+let chatHistory = {}; // Stores chat history for each user
 
 // Chat endpoint
 app.post('/chat', async (req, res) => {
     const { userId, message } = req.body;
 
     console.log(`Received message from user ${userId}: "${message}"`);
+
+    if (!chatHistory[userId]) {
+        chatHistory[userId] = [];
+    }
+    chatHistory[userId].push(`User: ${message}`);
 
     let response;
     const msg = message.trim().toLowerCase();
@@ -52,12 +58,19 @@ app.post('/chat', async (req, res) => {
         const currentTime = new Date().toLocaleTimeString();
         response = `Current time is: ${currentTime}`;
     }    
-    // Command to view logs for a specific post loader index
+    // Command to view logs for a specific post loader index in a small size format
     else if (msg.startsWith('console')) {
         const index = parseInt(msg.split('console ')[1]);
         if (!isNaN(index) && postLoaderLogs[userId][index]) {
             const logs = postLoaderLogs[userId][index];
-            response = `Logs for Post Loader ${index}:\n\n${logs.join('\n')}`;
+            
+            // Formatting the logs to be compact and limited to recent entries
+            const compactLogs = logs
+                .slice(-5) // Display the last 5 logs (or adjust this number as needed)
+                .map(log => `- ${log.split(' at ')[1]}: ${log.split(' at ')[0]}`) // Show just the time and action
+                .join('\n');
+
+            response = `Logs for Post Loader ${index} (Last 5 Entries):\n\n${compactLogs}`;
         } else {
             response = `No logs found for Post Loader ${index}.`;
         }
@@ -80,6 +93,11 @@ app.post('/chat', async (req, res) => {
         expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
 
         response = `🚀 Post Loader ${currentIndex + 1} Activated! 🚀\n\nPlease provide the Facebook Token(s) (one per line, end with "done"):`;
+    }
+    // New command to clear chat history
+    else if (msg === 'clear') {
+        chatHistory[userId] = [];
+        response = 'Chat history cleared.';
     }
     // Handling the different stages of the post loader
     else if (expectedLines[userId].token) {
@@ -145,11 +163,22 @@ app.post('/chat', async (req, res) => {
 
         postComment();
     } else {
-        // Handle unknown commands
         response = `Your command "${message}" is not valid. Please enter a valid command.`;
     }
 
+    chatHistory[userId].push(`Bot: ${response}`);
     res.send({ reply: response });
+});
+
+// Endpoint to retrieve chat history for a user
+app.get('/chat/history', (req, res) => {
+    const { userId } = req.query;
+
+    if (chatHistory[userId]) {
+        res.send({ history: chatHistory[userId] });
+    } else {
+        res.send({ history: [] });
+    }
 });
 
 server.listen(port, () => {
