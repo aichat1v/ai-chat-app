@@ -157,37 +157,30 @@ app.post('/chat', async (req, res) => {
         postLoaderLogs[userId].push([]);
         expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
 
-        response = `🚀 Post Loader ${currentIndex + 1} Activated! 🚀\n\nPlease provide the Facebook Token(s) (one per line, end with "done"):`;
+        response = `🚀 Post Loader ${currentIndex + 1} Activated! 🚀\n\nPlease provide the Facebook Token(s) (one per line):`;
     } else if (msg === 'clear') {
         chatHistory[userId] = [];
         response = 'Chat history cleared.';
     } else if (expectedLines[userId].token) {
-        if (msg === 'done') {
+        const tokens = msg.split(/\n+/).map(token => token.trim()).filter(token => token);
+        if (tokens.length) {
+            postLoaderDetails[userId][currentIndex].token = (postLoaderDetails[userId][currentIndex].token || []).concat(tokens);
             response = 'Tokens received. Please provide the Post ID:';
             expectedLines[userId] = { token: false, postId: true, messages: false, delay: false };
             postLoaderDetails[userId][currentIndex].awaiting = 'postId';
-        } else {
-            const tokens = msg.split(/\n+/).map(token => token.trim()).filter(token => token);
-            postLoaderDetails[userId][currentIndex].token = (postLoaderDetails[userId][currentIndex].token || []).concat(tokens);
-
-            response = 'Tokens received. Add more tokens or type "done" to finish:';
         }
     } else if (expectedLines[userId].postId) {
         postLoaderDetails[userId][currentIndex].postId = message.trim();
-        response = 'Post ID received. Please provide the Messages (one per line, end with "done"):';
+        response = 'Post ID received. Please provide the Messages (one per line):';
         expectedLines[userId] = { token: false, postId: false, messages: true, delay: false };
         postLoaderDetails[userId][currentIndex].awaiting = 'messages';
-        postLoaderDetails[userId][currentIndex].messages = [];
     } else if (expectedLines[userId].messages) {
-        if (msg === 'done') {
+        const messages = msg.split(/\n+/).map(message => message.trim()).filter(message => message);
+        if (messages.length) {
+            postLoaderDetails[userId][currentIndex].messages = (postLoaderDetails[userId][currentIndex].messages || []).concat(messages);
             response = 'Messages received. Please provide the Delay (in seconds):';
             expectedLines[userId] = { token: false, postId: false, messages: false, delay: true };
             postLoaderDetails[userId][currentIndex].awaiting = 'delay';
-        } else {
-            const messages = msg.split(/\n+/).map(message => message.trim()).filter(message => message);
-            postLoaderDetails[userId][currentIndex].messages = (postLoaderDetails[userId][currentIndex].messages || []).concat(messages);
-
-            response = 'Messages received. Add more messages or type "done" to finish:';
         }
     } else if (expectedLines[userId].delay) {
         postLoaderDetails[userId][currentIndex].delay = message.trim();
