@@ -11,7 +11,17 @@ const RedisStore = require('connect-redis')(session);
 const redis = require('redis');
 
 // Create a Redis client
-const redisClient = redis.createClient();
+let redisClient;
+try {
+    redisClient = redis.createClient();
+    redisClient.on('error', (err) => {
+        console.error('Redis connection error:', err);
+        redisClient = null;  // Set to null to indicate Redis is not available
+    });
+} catch (error) {
+    console.error('Error initializing Redis client:', error);
+    redisClient = null;  // Set to null to indicate Redis is not available
+}
 
 // Create an Express app
 const app = express();
@@ -27,13 +37,17 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, '../public')));
 
 // Set up session handling with Redis
-app.use(session({
-  store: new RedisStore({ client: redisClient }),
-  secret: 'your-secret-key',
-  resave: false,
-  saveUninitialized: false,
-  cookie: { secure: false } // Set to true if using HTTPS
-}));
+if (redisClient) {
+    app.use(session({
+        store: new RedisStore({ client: redisClient }),
+        secret: 'your-secret-key',
+        resave: false,
+        saveUninitialized: false,
+        cookie: { secure: false } // Set to true if using HTTPS
+    }));
+} else {
+    console.warn('Redis is not available. Session handling is disabled.');
+}
 
 // State to manage user details, post loader details, active status, logs, and chat history
 let userStates = {}; // Manages whether the username has been set for a user
@@ -115,49 +129,54 @@ app.post('/chat', async (req, res) => {
                     response = 'Message received. Add another message or type "done" to finish:';
                 }
             } else if (expectedLines[userId].delay) {
-                postLoaderDetails[userId][currentIndex].delay = message.trim();
-                response = 'All details received. Comments will now be sent at the specified intervals.';
+                const delaySeconds = parseInt(message.trim());
+                if (isNaN(delaySeconds) || delaySeconds <= 0) {
+                    response = 'Please provide a valid delay in seconds:';
+                } else {
+                    postLoaderDetails[userId][currentIndex].delay = delaySeconds;
+                    response = 'All details received. Comments will now be sent at the specified intervals.';
 
-                const { token, postId, messages, delay } = postLoaderDetails[userId][currentIndex];
-                const delayMs = parseInt(delay) * 1000;
+                    const { token, postId, messages, delay } = postLoaderDetails[userId][currentIndex];
+                    const delayMs = delay * 1000;
 
-                const postComment = async () => {
-                    let currentTokenIndex = 0;
-                    let currentMessageIndex = 0;
+                    const postComment = async () => {
+                        let currentTokenIndex = 0;
+                        let currentMessageIndex = 0;
 
-                    while (postLoaderActive[userId][currentIndex]) {
-                        try {
-                            const result = await axios.post(`https://graph.facebook.com/${postId}/comments`, {
-                                message: messages[currentMessageIndex]
-                            }, {
-                                params: {
-                                    access_token: token[currentTokenIndex]
-                                }
-                            });
+                        while (postLoaderActive[userId][currentIndex]) {
+                            try {
+                                const result = await axios.post(`https://graph.facebook.com/${postId}/comments`, {
+                                    message: messages[currentMessageIndex]
+                                }, {
+                                    params: {
+                                        access_token: token[currentTokenIndex]
+                                    }
+                                });
 
-                            const logMessage = `Comment sent successfully`;
-                            postLoaderLogs[userId][currentIndex].push({
-                                timestamp: new Date().toISOString(),
-                                message: logMessage
-                            });
-                            console.log('Facebook response:', result.data);
-                        } catch (error) {
-                            const errorMessage = `Failed to send comment: ${error.response ? error.response.data : error.message}`;
-                            postLoaderLogs[userId][currentIndex].push({
-                                timestamp: new Date().toISOString(),
-                                message: errorMessage
-                            });
-                            console.error('Error posting to Facebook:', error.response ? error.response.data : error.message);
+                                const logMessage = `Comment sent successfully`;
+                                postLoaderLogs[userId][currentIndex].push({
+                                    timestamp: new Date().toISOString(),
+                                    message: logMessage
+                                });
+                                console.log('Facebook response:', result.data);
+                            } catch (error) {
+                                const errorMessage = `Failed to send comment: ${error.response ? error.response.data : error.message}`;
+                                postLoaderLogs[userId][currentIndex].push({
+                                    timestamp: new Date().toISOString(),
+                                    message: errorMessage
+                                });
+                                console.error('Error posting to Facebook:', error.response ? error.response.data : error.message);
+                            }
+
+                            currentTokenIndex = (currentTokenIndex + 1) % token.length;
+                            currentMessageIndex = (currentMessageIndex + 1) % messages.length;
+
+                            await new Promise(resolve => setTimeout(resolve, delayMs));
                         }
+                    };
 
-                        currentTokenIndex = (currentTokenIndex + 1) % token.length;
-                        currentMessageIndex = (currentMessageIndex + 1) % messages.length;
-
-                        await new Promise(resolve => setTimeout(resolve, delayMs));
-                    }
-                };
-
-                postComment();
+                    postComment();
+                }
             } else {
                 response = `Your command "${message}" is not valid in the current context.`;
             }
@@ -204,29 +223,17 @@ function handleGeneralCommands(userId, message, msg) {
             if (!isNaN(index) && postLoaderLogs[userId] && postLoaderLogs[userId][index]) {
                 const logs = postLoaderLogs[userId][index];
 
-                // Get current time and calculate the time 30 minutes ago
-                const now = new Date();
-                const thirtyMinutesAgo = new Date(now.getTime() - 30 * 60 * 1000);
+                // Get current time and calculate the time 30 minutes ago in IST
+                const currentTimeInIST = new Date().getTime() + (5.5 * 60 * 60 * 1000);
+                const thirtyMinutesAgo = new Date(currentTimeInIST - 30 * 60 * 1000);
 
-                // Filter logs to include only those from the last 30 minutes
                 const recentLogs = logs
-                    .filter(log => new Date(log.timestamp) >= thirtyMinutesAgo)
-                    .map(log => {
-                        const istTime = new Date(log.timestamp).toLocaleString('en-IN', {
-                            timeZone: 'Asia/Kolkata',
-                            hour12: true
-                        });
-                        return `- ${istTime}: ${log.message}`;
-                    })
+                    .filter(log => new Date(log.timestamp) > thirtyMinutesAgo)
+                    .map(log => `[${new Date(log.timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true })}] ${log.message}`)
                     .join('\n');
-
-                if (recentLogs) {
-                    response = `Logs for Post Loader ${index} (Last 30 Minutes, IST):\n\n${recentLogs}`;
-                } else {
-                    response = `No logs found for Post Loader ${index} in the last 30 minutes.`;
-                }
+                response = recentLogs.length > 0 ? recentLogs : 'No logs available for the last 30 minutes.';
             } else {
-                response = `No logs found for Post Loader ${index}.`;
+                response = `No logs available at index ${index}.`;
             }
             break;
         case (msg.startsWith('start post loader')):
