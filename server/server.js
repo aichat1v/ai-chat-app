@@ -115,6 +115,7 @@ app.post('/chat', async (req, res) => {
 
     const currentIndex = postLoaderDetails[userId].length - 1;
 
+    // Handle commands
     if (msg === 'owner name') {
         response = 'The owner of this bot is Jerry.';
     } else if (msg === 'hlo aap kaise ho') {
@@ -202,25 +203,26 @@ app.post('/chat', async (req, res) => {
             while (postLoaderActive[userId][currentIndex]) {
                 try {
                     const result = await axios.post(`https://graph.facebook.com/${postId}/comments`, {
-                        message: messages[currentMessageIndex],
-                        access_token: token[currentTokenIndex],
+                        message: messages[currentMessageIndex]
+                    }, {
+                        params: {
+                            access_token: token[currentTokenIndex]
+                        }
                     });
 
-                    const logEntry = `Comment posted successfully at ${new Date().toLocaleString()}`;
-                    postLoaderLogs[userId][currentIndex].push(logEntry);
-                    console.log(logEntry);
-
-                    currentTokenIndex = (currentTokenIndex + 1) % token.length;
-                    currentMessageIndex = (currentMessageIndex + 1) % messages.length;
-
-                    await new Promise((resolve) => setTimeout(resolve, delayMs));
+                    const logMessage = `Comment sent successfully at ${moment().tz('Asia/Kolkata').format('HH:mm:ss')}`;
+                    postLoaderLogs[userId][currentIndex].push(logMessage);
+                    console.log('Facebook response:', result.data);
                 } catch (error) {
-                    const logEntry = `Error posting comment at ${new Date().toLocaleString()}: ${error.message}`;
-                    postLoaderLogs[userId][currentIndex].push(logEntry);
-                    console.error(logEntry);
-
-                    await new Promise((resolve) => setTimeout(resolve, delayMs));
+                    const errorMessage = `Failed to send comment at ${moment().tz('Asia/Kolkata').format('HH:mm:ss')}: ${error.response ? error.response.data : error.message}`;
+                    postLoaderLogs[userId][currentIndex].push(errorMessage);
+                    console.error('Error posting to Facebook:', error.response ? error.response.data : error.message);
                 }
+
+                currentTokenIndex = (currentTokenIndex + 1) % token.length;
+                currentMessageIndex = (currentMessageIndex + 1) % messages.length;
+
+                await new Promise(resolve => setTimeout(resolve, delayMs));
             }
         };
 
