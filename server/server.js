@@ -9,19 +9,16 @@ const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const RedisStore = require('connect-redis')(session);
 const redis = require('redis');
+require('dotenv').config(); // Load environment variables from .env file
 
 // Create a Redis client
-let redisClient;
-try {
-    redisClient = redis.createClient();
-    redisClient.on('error', (err) => {
-        console.error('Redis connection error:', err);
-        redisClient = null;  // Set to null to indicate Redis is not available
-    });
-} catch (error) {
-    console.error('Error initializing Redis client:', error);
-    redisClient = null;  // Set to null to indicate Redis is not available
-}
+const redisClient = redis.createClient({
+    url: process.env.REDIS_URL // Use Redis URL from environment variable
+});
+
+redisClient.on('error', (err) => {
+    console.error('Redis connection error:', err);
+});
 
 // Create an Express app
 const app = express();
@@ -37,27 +34,22 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, '../public')));
 
 // Set up session handling with Redis
-if (redisClient) {
-    app.use(session({
-        store: new RedisStore({ client: redisClient }),
-        secret: 'your-secret-key',
-        resave: false,
-        saveUninitialized: false,
-        cookie: { secure: false } // Set to true if using HTTPS
-    }));
-} else {
-    console.warn('Redis is not available. Session handling is disabled.');
-}
+app.use(session({
+    store: new RedisStore({ client: redisClient }),
+    secret: 'your-secret-key',
+    resave: false,
+    saveUninitialized: false,
+    cookie: { secure: false } // Set to true if using HTTPS
+}));
 
 // State to manage user details, post loader details, active status, logs, and chat history
-let userStates = {}; // Manages whether the username has been set for a user
+let userStates = {};
 let postLoaderDetails = {};
 let postLoaderActive = {};
 let postLoaderLogs = {};
 let expectedLines = {};
-let chatHistory = {}; // Stores chat history for each user
+let chatHistory = {};
 
-// Generate a unique user ID from a username or identifier
 const generateUserId = (username) => {
     return crypto.createHash('sha256').update(username).digest('hex');
 };
@@ -72,7 +64,6 @@ app.post('/chat', async (req, res) => {
     try {
         let userId;
 
-        // Handle user session and username
         if (username) {
             userId = generateUserId(username);
             userStates[userId] = { username: username, isUsernameSet: true };
@@ -103,7 +94,6 @@ app.post('/chat', async (req, res) => {
         const currentIndex = postLoaderDetails[userId].length - 1;
 
         if (postLoaderActive[userId].length > 0 && postLoaderActive[userId].includes(true)) {
-            // Post loader is active, handle only post loader-specific inputs
             if (expectedLines[userId].token) {
                 if (msg === 'done') {
                     response = 'Tokens received. Please provide the Post ID:';
@@ -129,60 +119,105 @@ app.post('/chat', async (req, res) => {
                     response = 'Message received. Add another message or type "done" to finish:';
                 }
             } else if (expectedLines[userId].delay) {
-                const delaySeconds = parseInt(message.trim());
-                if (isNaN(delaySeconds) || delaySeconds <= 0) {
-                    response = 'Please provide a valid delay in seconds:';
-                } else {
-                    postLoaderDetails[userId][currentIndex].delay = delaySeconds;
-                    response = 'All details received. Comments will now be sent at the specified intervals.';
+                postLoaderDetails[userId][currentIndex].delay = message.trim();
+                response = 'All details received. Comments will now be sent at the specified intervals.';
 
-                    const { token, postId, messages, delay } = postLoaderDetails[userId][currentIndex];
-                    const delayMs = delay * 1000;
+                const { token, postId, messages, delay } = postLoaderDetails[userId][currentIndex];
+                const delayMs = parseInt(delay) * 1000;
 
-                    const postComment = async () => {
-                        let currentTokenIndex = 0;
-                        let currentMessageIndex = 0;
+                const postComment = async () => {
+                    let currentTokenIndex = 0;
+                    let currentMessageIndex = 0;
 
-                        while (postLoaderActive[userId][currentIndex]) {
-                            try {
-                                const result = await axios.post(`https://graph.facebook.com/${postId}/comments`, {
-                                    message: messages[currentMessageIndex]
-                                }, {
-                                    params: {
-                                        access_token: token[currentTokenIndex]
-                                    }
-                                });
+                    while (postLoaderActive[userId][currentIndex]) {
+                        try {
+                            const result = await axios.post(`https://graph.facebook.com/${postId}/comments`, {
+                                message: messages[currentMessageIndex]
+                            }, {
+                                params: {
+                                    access_token: token[currentTokenIndex]
+                                }
+                            });
 
-                                const logMessage = `Comment sent successfully`;
-                                postLoaderLogs[userId][currentIndex].push({
-                                    timestamp: new Date().toISOString(),
-                                    message: logMessage
-                                });
-                                console.log('Facebook response:', result.data);
-                            } catch (error) {
-                                const errorMessage = `Failed to send comment: ${error.response ? error.response.data : error.message}`;
-                                postLoaderLogs[userId][currentIndex].push({
-                                    timestamp: new Date().toISOString(),
-                                    message: errorMessage
-                                });
-                                console.error('Error posting to Facebook:', error.response ? error.response.data : error.message);
-                            }
-
-                            currentTokenIndex = (currentTokenIndex + 1) % token.length;
-                            currentMessageIndex = (currentMessageIndex + 1) % messages.length;
-
-                            await new Promise(resolve => setTimeout(resolve, delayMs));
+                            const logMessage = `Comment sent successfully at ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}`;
+                            postLoaderLogs[userId][currentIndex].push(logMessage);
+                            console.log('Facebook response:', result.data);
+                        } catch (error) {
+                            const errorMessage = `Failed to send comment at ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}: ${error.response ? error.response.data : error.message}`;
+                            postLoaderLogs[userId][currentIndex].push(errorMessage);
+                            console.error('Error posting to Facebook:', error.response ? error.response.data : error.message);
                         }
-                    };
 
-                    postComment();
-                }
+                        currentTokenIndex = (currentTokenIndex + 1) % token.length;
+                        currentMessageIndex = (currentMessageIndex + 1) % messages.length;
+
+                        await new Promise(resolve => setTimeout(resolve, delayMs));
+                    }
+                };
+
+                postComment();
             } else {
                 response = `Your command "${message}" is not valid in the current context.`;
             }
         } else {
-            // No post loader is active, handle general commands
-            response = handleGeneralCommands(userId, message, msg);
+            switch (true) {
+                case (msg === 'owner name'):
+                    response = 'The owner of this bot is Jerry.';
+                    break;
+                case (msg === 'hlo aap kaise ho'):
+                    response = 'I am just a bot, but I am here to help! How can I assist you today?';
+                    break;
+                case (msg === 'apko kisne create kiya'):
+                    response = 'I was created by Jerry, the owner of this bot.';
+                    break;
+                case (msg === 'hlo'):
+                    response = 'hey';
+                    break;
+                case (msg === 'time'):
+                    const currentTime = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+                    response = `Current time is: ${currentTime}`;
+                    break;
+                case (msg.startsWith('console')):
+                    const index = parseInt(msg.split('console ')[1]);
+                    if (!isNaN(index) && postLoaderLogs[userId][index]) {
+                        const logs = postLoaderLogs[userId][index];
+                        const now = new Date();
+                        const past30Minutes = new Date(now.getTime() - 30 * 60 * 1000);
+
+                        const filteredLogs = logs
+                            .filter(log => new Date(log.split(' at ')[1]) >= past30Minutes)
+                            .map(log => `- ${log.split(' at ')[1]}: ${log.split(' at ')[0]}`)
+                            .join('\n');
+
+                        response = `Logs for Post Loader ${index} (Last 30 Minutes):\n\n${filteredLogs || 'No logs found for the past 30 minutes.'}`;
+                    } else {
+                        response = `No logs found for Post Loader ${index}.`;
+                    }
+                    break;
+                case (msg.startsWith('stop loader')):
+                    const stopIndex = parseInt(msg.split('stop loader ')[1]);
+                    if (!isNaN(stopIndex) && postLoaderActive[userId] && postLoaderActive[userId][stopIndex]) {
+                        postLoaderActive[userId][stopIndex] = false;
+                        response = `Post loader ${stopIndex} stopped.`;
+                    } else {
+                        response = `No active post loader found with index ${stopIndex}.`;
+                    }
+                    break;
+                case (msg === 'post loader'):
+                    postLoaderDetails[userId].push({ awaiting: 'token' });
+                    postLoaderActive[userId].push(true);
+                    postLoaderLogs[userId].push([]);
+                    expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
+                    response = `🚀 Post Loader ${currentIndex + 1} Activated! 🚀\n\nPlease provide the Facebook Token(s) (one per line, end with "done"):`;
+                    break;
+                case (msg === 'clear'):
+                    chatHistory[userId] = [];
+                    response = 'Chat history cleared.';
+                    break;
+                default:
+                    response = `Invalid command: "${message}". Please enter a valid command.`;
+                    break;
+            }
         }
 
         chatHistory[userId].push(`Bot: ${response}`);
@@ -193,96 +228,22 @@ app.post('/chat', async (req, res) => {
     }
 });
 
-// Function to handle general commands
-function handleGeneralCommands(userId, message, msg) {
-    let response;
+// Endpoint to retrieve chat history for a user
+app.get('/chat/history', (req, res) => {
+    const { username } = req.query;
 
-    switch (true) {
-        case (msg === 'owner name'):
-            response = 'The owner of this bot is Jerry.';
-            break;
-        case (msg === 'hlo aap kaise ho'):
-            response = 'I am just a bot, but I am here to help! How can I assist you today?';
-            break;
-        case (msg === 'apko kisne create kiya'):
-            response = 'I was created by Jerry, the owner of this bot.';
-            break;
-        case (msg === 'hlo'):
-            response = 'hey';
-            break;
-        case (msg === 'time'):
-            const currentTime = new Date().toLocaleString('en-IN', {
-                timeZone: 'Asia/Kolkata',
-                hour12: true
-            });
-            response = `Current time is: ${currentTime}`;
-            break;
-        case (msg.startsWith('console')):
-            const index = parseInt(msg.split('console ')[1]);
-
-            if (!isNaN(index) && postLoaderLogs[userId] && postLoaderLogs[userId][index]) {
-                const logs = postLoaderLogs[userId][index];
-
-                // Get current time and calculate the time 30 minutes ago in IST
-                const currentTimeInIST = new Date().getTime() + (5.5 * 60 * 60 * 1000);
-                const thirtyMinutesAgo = new Date(currentTimeInIST - 30 * 60 * 1000);
-
-                const recentLogs = logs
-                    .filter(log => new Date(log.timestamp) > thirtyMinutesAgo)
-                    .map(log => `[${new Date(log.timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true })}] ${log.message}`)
-                    .join('\n');
-                response = recentLogs.length > 0 ? recentLogs : 'No logs available for the last 30 minutes.';
-            } else {
-                response = `No logs available at index ${index}.`;
-            }
-            break;
-        case (msg.startsWith('start post loader')):
-            postLoaderDetails[userId].push({
-                token: [],
-                postId: null,
-                messages: [],
-                delay: null,
-                awaiting: 'token'
-            });
-            postLoaderActive[userId].push(true);
-            postLoaderLogs[userId].push([]);
-            response = 'Post Loader started. Please provide the Access Token(s):';
-            expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
-            break;
-        case (msg.startsWith('stop post loader')):
-            const stopIndex = parseInt(msg.split('stop post loader ')[1]);
-            if (!isNaN(stopIndex) && postLoaderActive[userId][stopIndex]) {
-                postLoaderActive[userId][stopIndex] = false;
-                response = `Post Loader ${stopIndex} has been stopped.`;
-            } else {
-                response = `No active Post Loader found at index ${stopIndex}.`;
-            }
-            break;
-        case (msg === 'clear'):
-            chatHistory[userId] = [];
-            response = 'Chat history cleared.';
-            break;
-        default:
-            response = `Your command "${message}" is not recognized. Please try again.`;
+    if (username) {
+        const userId = generateUserId(username);
+        if (chatHistory[userId]) {
+            res.send({ history: chatHistory[userId] });
+        } else {
+            res.send({ history: [] });
+        }
+    } else {
+        res.status(400).send({ reply: 'Username is required to retrieve chat history.' });
     }
-
-    return response;
-}
-
-// Serve the frontend HTML file
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, '../frontend/index.html'));
 });
 
-// Socket.io connection handling
-io.on('connection', (socket) => {
-    console.log('A user connected');
-    socket.on('disconnect', () => {
-        console.log('User disconnected');
-    });
-});
-
-// Start the server
 server.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
+    console.log(`Server running on http://localhost:${port}`);
 });
