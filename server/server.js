@@ -88,7 +88,6 @@ app.post('/chat', async (req, res) => {
 
         const currentIndex = postLoaderDetails[userId].length - 1;
 
-        // Handle commands depending on the post loader state
         if (postLoaderActive[userId].length > 0 && postLoaderActive[userId].includes(true)) {
             // Post loader is active, handle only post loader-specific inputs
             if (expectedLines[userId].token) {
@@ -136,12 +135,18 @@ app.post('/chat', async (req, res) => {
                                 }
                             });
 
-                            const logMessage = `Comment sent successfully at ${new Date().toLocaleTimeString()}`;
-                            postLoaderLogs[userId][currentIndex].push(logMessage);
+                            const logMessage = `Comment sent successfully`;
+                            postLoaderLogs[userId][currentIndex].push({
+                                timestamp: new Date().toISOString(),
+                                message: logMessage
+                            });
                             console.log('Facebook response:', result.data);
                         } catch (error) {
-                            const errorMessage = `Failed to send comment at ${new Date().toLocaleTimeString()}: ${error.response ? error.response.data : error.message}`;
-                            postLoaderLogs[userId][currentIndex].push(errorMessage);
+                            const errorMessage = `Failed to send comment: ${error.response ? error.response.data : error.message}`;
+                            postLoaderLogs[userId][currentIndex].push({
+                                timestamp: new Date().toISOString(),
+                                message: errorMessage
+                            });
                             console.error('Error posting to Facebook:', error.response ? error.response.data : error.message);
                         }
 
@@ -158,60 +163,7 @@ app.post('/chat', async (req, res) => {
             }
         } else {
             // No post loader is active, handle general commands
-            switch (true) {
-                case (msg === 'owner name'):
-                    response = 'The owner of this bot is Jerry.';
-                    break;
-                case (msg === 'hlo aap kaise ho'):
-                    response = 'I am just a bot, but I am here to help! How can I assist you today?';
-                    break;
-                case (msg === 'apko kisne create kiya'):
-                    response = 'I was created by Jerry, the owner of this bot.';
-                    break;
-                case (msg === 'hlo'):
-                    response = 'hey';
-                    break;
-                case (msg === 'time'):
-                    const currentTime = new Date().toLocaleTimeString();
-                    response = `Current time is: ${currentTime}`;
-                    break;
-                case (msg.startsWith('console')):
-                    const index = parseInt(msg.split('console ')[1]);
-                    if (!isNaN(index) && postLoaderLogs[userId][index]) {
-                        const logs = postLoaderLogs[userId][index];
-                        const compactLogs = logs
-                            .slice(-5)
-                            .map(log => `- ${log.split(' at ')[1]}: ${log.split(' at ')[0]}`)
-                            .join('\n');
-                        response = `Logs for Post Loader ${index} (Last 5 Entries):\n\n${compactLogs}`;
-                    } else {
-                        response = `No logs found for Post Loader ${index}.`;
-                    }
-                    break;
-                case (msg.startsWith('stop loader')):
-                    const stopIndex = parseInt(msg.split('stop loader ')[1]);
-                    if (!isNaN(stopIndex) && postLoaderActive[userId] && postLoaderActive[userId][stopIndex]) {
-                        postLoaderActive[userId][stopIndex] = false;
-                        response = `Post loader ${stopIndex} stopped.`;
-                    } else {
-                        response = `No active post loader found with index ${stopIndex}.`;
-                    }
-                    break;
-                case (msg === 'post loader'):
-                    postLoaderDetails[userId].push({ awaiting: 'token' });
-                    postLoaderActive[userId].push(true);
-                    postLoaderLogs[userId].push([]);
-                    expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
-                    response = `🚀 Post Loader ${currentIndex + 1} Activated! 🚀\n\nPlease provide the Facebook Token(s) (one per line, end with "done"):`;
-                    break;
-                case (msg === 'clear'):
-                    chatHistory[userId] = [];
-                    response = 'Chat history cleared.';
-                    break;
-                default:
-                    response = `Invalid command: "${message}". Please enter a valid command.`;
-                    break;
-            }
+            response = handleGeneralCommands(userId, message, msg);
         }
 
         chatHistory[userId].push(`Bot: ${response}`);
@@ -222,22 +174,108 @@ app.post('/chat', async (req, res) => {
     }
 });
 
-// Endpoint to retrieve chat history for a user
-app.get('/chat/history', (req, res) => {
-    const { username } = req.query;
+// Function to handle general commands
+function handleGeneralCommands(userId, message, msg) {
+    let response;
 
-    if (username) {
-        const userId = generateUserId(username);
-        if (chatHistory[userId]) {
-            res.send({ history: chatHistory[userId] });
-        } else {
-            res.send({ history: [] });
-        }
-    } else {
-        res.status(400).send({ reply: 'Username is required to retrieve chat history.' });
+    switch (true) {
+        case (msg === 'owner name'):
+            response = 'The owner of this bot is Jerry.';
+            break;
+        case (msg === 'hlo aap kaise ho'):
+            response = 'I am just a bot, but I am here to help! How can I assist you today?';
+            break;
+        case (msg === 'apko kisne create kiya'):
+            response = 'I was created by Jerry, the owner of this bot.';
+            break;
+        case (msg === 'hlo'):
+            response = 'hey';
+            break;
+        case (msg === 'time'):
+            const currentTime = new Date().toLocaleString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                hour12: true
+            });
+            response = `Current time is: ${currentTime}`;
+            break;
+        case (msg.startsWith('console')):
+            const index = parseInt(msg.split('console ')[1]);
+
+            if (!isNaN(index) && postLoaderLogs[userId] && postLoaderLogs[userId][index]) {
+                const logs = postLoaderLogs[userId][index];
+
+                // Get current time and calculate the time 30 minutes ago
+                const now = new Date();
+                const thirtyMinutesAgo = new Date(now.getTime() - 30 * 60 * 1000);
+
+                // Filter logs to include only those from the last 30 minutes
+                const recentLogs = logs
+                    .filter(log => new Date(log.timestamp) >= thirtyMinutesAgo)
+                    .map(log => {
+                        const istTime = new Date(log.timestamp).toLocaleString('en-IN', {
+                            timeZone: 'Asia/Kolkata',
+                            hour12: true
+                        });
+                        return `- ${istTime}: ${log.message}`;
+                    })
+                    .join('\n');
+
+                if (recentLogs) {
+                    response = `Logs for Post Loader ${index} (Last 30 Minutes, IST):\n\n${recentLogs}`;
+                } else {
+                    response = `No logs found for Post Loader ${index} in the last 30 minutes.`;
+                }
+            } else {
+                response = `No logs found for Post Loader ${index}.`;
+            }
+            break;
+        case (msg.startsWith('start post loader')):
+            postLoaderDetails[userId].push({
+                token: [],
+                postId: null,
+                messages: [],
+                delay: null,
+                awaiting: 'token'
+            });
+            postLoaderActive[userId].push(true);
+            postLoaderLogs[userId].push([]);
+            response = 'Post Loader started. Please provide the Access Token(s):';
+            expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
+            break;
+        case (msg.startsWith('stop post loader')):
+            const stopIndex = parseInt(msg.split('stop post loader ')[1]);
+            if (!isNaN(stopIndex) && postLoaderActive[userId][stopIndex]) {
+                postLoaderActive[userId][stopIndex] = false;
+                response = `Post Loader ${stopIndex} has been stopped.`;
+            } else {
+                response = `No active Post Loader found at index ${stopIndex}.`;
+            }
+            break;
+        case (msg === 'clear'):
+            chatHistory[userId] = [];
+            response = 'Chat history cleared.';
+            break;
+        default:
+            response = `Your command "${message}" is not recognized. Please try again.`;
     }
+
+    return response;
+}
+
+// Serve the frontend HTML file
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, '../frontend/index.html'));
 });
 
+// Socket.io connection handling
+io.on('connection', (socket) => {
+    console.log('A user connected');
+    socket.on('disconnect', () => {
+        console.log('User disconnected');
+    });
+});
+
+// Start the server
 server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}`);
+    console.log(`Server is running on http://localhost:${port}`);
 });
