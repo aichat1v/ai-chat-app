@@ -7,11 +7,6 @@ const { Server } = require('socket.io');
 const uuid = require('uuid');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
-const RedisStore = require('connect-redis')(session);
-const redis = require('redis');
-
-// Create a Redis client
-const redisClient = redis.createClient();
 
 // Create an Express app
 const app = express();
@@ -26,9 +21,8 @@ app.use(bodyParser.json());
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Set up session handling with Redis
+// Set up session handling with in-memory store
 app.use(session({
-  store: new RedisStore({ client: redisClient }),
   secret: 'your-secret-key',
   resave: false,
   saveUninitialized: false,
