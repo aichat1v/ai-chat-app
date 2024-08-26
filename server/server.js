@@ -7,6 +7,11 @@ const { Server } = require('socket.io');
 const uuid = require('uuid');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
+const RedisStore = require('connect-redis')(session);
+const redis = require('redis');
+
+// Create a Redis client
+const redisClient = redis.createClient();
 
 // Create an Express app
 const app = express();
@@ -21,8 +26,9 @@ app.use(bodyParser.json());
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Set up session handling with in-memory store
+// Set up session handling with Redis
 app.use(session({
+  store: new RedisStore({ client: redisClient }),
   secret: 'your-secret-key',
   resave: false,
   saveUninitialized: false,
@@ -101,8 +107,10 @@ app.post('/chat', async (req, res) => {
                     expectedLines[userId] = { token: false, postId: true, messages: false, delay: false };
                     postLoaderDetails[userId][currentIndex].awaiting = 'postId';
                 } else {
-                    postLoaderDetails[userId][currentIndex].token = (postLoaderDetails[userId][currentIndex].token || []).concat(message.trim());
-                    response = 'Token received. Add another token or type "done" to finish:';
+                    // Split tokens by newline or comma
+                    const tokens = message.split(/\n|,/).map(token => token.trim()).filter(token => token);
+                    postLoaderDetails[userId][currentIndex].token = (postLoaderDetails[userId][currentIndex].token || []).concat(tokens);
+                    response = 'Tokens received. Add another token or type "done" to finish:';
                 }
             } else if (expectedLines[userId].postId) {
                 postLoaderDetails[userId][currentIndex].postId = message.trim();
@@ -226,22 +234,7 @@ app.post('/chat', async (req, res) => {
     }
 });
 
-// Endpoint to retrieve chat history for a user
-app.get('/chat/history', (req, res) => {
-    const { username } = req.query;
-
-    if (username) {
-        const userId = Object.keys(userStates).find(id => userStates[id].username === username);
-        if (userId && chatHistory[userId]) {
-            res.send({ history: chatHistory[userId] });
-        } else {
-            res.send({ history: [] });
-        }
-    } else {
-        res.status(400).send({ reply: 'Username is required to retrieve chat history.' });
-    }
-});
-
+// Start the server
 server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}`);
+    console.log(`Server is running on http://localhost:${port}`);
 });
