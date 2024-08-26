@@ -4,21 +4,14 @@ const path = require('path');
 const axios = require('axios');
 const http = require('http');
 const { Server } = require('socket.io');
-const crypto = require('crypto');
+const uuid = require('uuid');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const RedisStore = require('connect-redis')(session);
 const redis = require('redis');
-require('dotenv').config(); // Load environment variables from .env file
 
 // Create a Redis client
-const redisClient = redis.createClient({
-    url: process.env.REDIS_URL // Use Redis URL from environment variable
-});
-
-redisClient.on('error', (err) => {
-    console.error('Redis connection error:', err);
-});
+const redisClient = redis.createClient();
 
 // Create an Express app
 const app = express();
@@ -35,24 +28,32 @@ app.use(express.static(path.join(__dirname, '../public')));
 
 // Set up session handling with Redis
 app.use(session({
-    store: new RedisStore({ client: redisClient }),
-    secret: 'your-secret-key',
-    resave: false,
-    saveUninitialized: false,
-    cookie: { secure: false } // Set to true if using HTTPS
+  store: new RedisStore({ client: redisClient }),
+  secret: 'your-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { secure: false } // Set to true if using HTTPS
 }));
 
 // State to manage user details, post loader details, active status, logs, and chat history
-let userStates = {};
+let userStates = {}; // Manages whether the username has been set for a user
 let postLoaderDetails = {};
 let postLoaderActive = {};
 let postLoaderLogs = {};
 let expectedLines = {};
-let chatHistory = {};
+let chatHistory = {}; // Stores chat history for each user
 
-const generateUserId = (username) => {
-    return crypto.createHash('sha256').update(username).digest('hex');
+// Generate a random username
+const generateRandomUsername = () => {
+    const adjectives = ['Quick', 'Lazy', 'Clever', 'Bright', 'Brave'];
+    const animals = ['Fox', 'Dog', 'Cat', 'Bear', 'Tiger'];
+    const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)];
+    const randomAnimal = animals[Math.floor(Math.random() * animals.length)];
+    return `${randomAdj}${randomAnimal}${Math.floor(Math.random() * 1000)}`;
 };
+
+// Generate a unique user ID using UUID
+const generateUserId = () => uuid.v4();
 
 // Chat endpoint
 app.post('/chat', async (req, res) => {
@@ -64,17 +65,21 @@ app.post('/chat', async (req, res) => {
     try {
         let userId;
 
+        // Handle user session and username
         if (username) {
-            userId = generateUserId(username);
+            userId = generateUserId();
             userStates[userId] = { username: username, isUsernameSet: true };
         } else {
             userId = Object.keys(userStates).find(id => !userStates[id].isUsernameSet);
             if (!userId) {
-                return res.status(400).send({ reply: 'Please provide a username first.' });
+                // If no user session, assign a random username and generate user ID
+                const randomUsername = generateRandomUsername();
+                userId = generateUserId();
+                userStates[userId] = { username: randomUsername, isUsernameSet: true };
             }
         }
 
-        console.log(`Received message from user ${userId} (${username}): "${message}"`);
+        console.log(`Received message from user ${userId} (${userStates[userId].username}): "${message}"`);
 
         if (!chatHistory[userId]) {
             chatHistory[userId] = [];
@@ -93,7 +98,9 @@ app.post('/chat', async (req, res) => {
 
         const currentIndex = postLoaderDetails[userId].length - 1;
 
+        // Handle commands depending on the post loader state
         if (postLoaderActive[userId].length > 0 && postLoaderActive[userId].includes(true)) {
+            // Post loader is active, handle only post loader-specific inputs
             if (expectedLines[userId].token) {
                 if (msg === 'done') {
                     response = 'Tokens received. Please provide the Post ID:';
@@ -139,11 +146,11 @@ app.post('/chat', async (req, res) => {
                                 }
                             });
 
-                            const logMessage = `Comment sent successfully at ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}`;
+                            const logMessage = `Comment sent successfully at ${new Date().toLocaleTimeString()}`;
                             postLoaderLogs[userId][currentIndex].push(logMessage);
                             console.log('Facebook response:', result.data);
                         } catch (error) {
-                            const errorMessage = `Failed to send comment at ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}: ${error.response ? error.response.data : error.message}`;
+                            const errorMessage = `Failed to send comment at ${new Date().toLocaleTimeString()}: ${error.response ? error.response.data : error.message}`;
                             postLoaderLogs[userId][currentIndex].push(errorMessage);
                             console.error('Error posting to Facebook:', error.response ? error.response.data : error.message);
                         }
@@ -160,6 +167,7 @@ app.post('/chat', async (req, res) => {
                 response = `Your command "${message}" is not valid in the current context.`;
             }
         } else {
+            // No post loader is active, handle general commands
             switch (true) {
                 case (msg === 'owner name'):
                     response = 'The owner of this bot is Jerry.';
@@ -174,22 +182,18 @@ app.post('/chat', async (req, res) => {
                     response = 'hey';
                     break;
                 case (msg === 'time'):
-                    const currentTime = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+                    const currentTime = new Date().toLocaleTimeString();
                     response = `Current time is: ${currentTime}`;
                     break;
                 case (msg.startsWith('console')):
                     const index = parseInt(msg.split('console ')[1]);
                     if (!isNaN(index) && postLoaderLogs[userId][index]) {
                         const logs = postLoaderLogs[userId][index];
-                        const now = new Date();
-                        const past30Minutes = new Date(now.getTime() - 30 * 60 * 1000);
-
-                        const filteredLogs = logs
-                            .filter(log => new Date(log.split(' at ')[1]) >= past30Minutes)
+                        const compactLogs = logs
+                            .slice(-5)
                             .map(log => `- ${log.split(' at ')[1]}: ${log.split(' at ')[0]}`)
                             .join('\n');
-
-                        response = `Logs for Post Loader ${index} (Last 30 Minutes):\n\n${filteredLogs || 'No logs found for the past 30 minutes.'}`;
+                        response = `Logs for Post Loader ${index} (Last 5 Entries):\n\n${compactLogs}`;
                     } else {
                         response = `No logs found for Post Loader ${index}.`;
                     }
@@ -208,7 +212,7 @@ app.post('/chat', async (req, res) => {
                     postLoaderActive[userId].push(true);
                     postLoaderLogs[userId].push([]);
                     expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
-                    response = `🚀 Post Loader ${currentIndex + 1} Activated! 🚀\n\nPlease provide the Facebook Token(s) (one per line, end with "done"):`;
+                    response = `🚀 Post Loader ${postLoaderDetails[userId].length} Activated! 🚀\n\nPlease provide the Facebook Token(s) (one per line, end with "done"):`;
                     break;
                 case (msg === 'clear'):
                     chatHistory[userId] = [];
@@ -233,8 +237,8 @@ app.get('/chat/history', (req, res) => {
     const { username } = req.query;
 
     if (username) {
-        const userId = generateUserId(username);
-        if (chatHistory[userId]) {
+        const userId = Object.keys(userStates).find(id => userStates[id].username === username);
+        if (userId && chatHistory[userId]) {
             res.send({ history: chatHistory[userId] });
         } else {
             res.send({ history: [] });
