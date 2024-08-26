@@ -167,7 +167,7 @@ app.post('/chat', async (req, res) => {
             expectedLines[userId] = { token: false, postId: true, messages: false, delay: false };
             postLoaderDetails[userId][currentIndex].awaiting = 'postId';
         } else {
-            const tokens = msg.split(/[\n,]+/).map(token => token.trim()).filter(token => token);
+            const tokens = msg.split(/\n+/).map(token => token.trim()).filter(token => token);
             postLoaderDetails[userId][currentIndex].token = (postLoaderDetails[userId][currentIndex].token || []).concat(tokens);
 
             response = 'Tokens received. Add more tokens or type "done" to finish:';
@@ -184,7 +184,7 @@ app.post('/chat', async (req, res) => {
             expectedLines[userId] = { token: false, postId: false, messages: false, delay: true };
             postLoaderDetails[userId][currentIndex].awaiting = 'delay';
         } else {
-            const messages = msg.split(/[\n,]+/).map(message => message.trim()).filter(message => message);
+            const messages = msg.split(/\n+/).map(message => message.trim()).filter(message => message);
             postLoaderDetails[userId][currentIndex].messages = (postLoaderDetails[userId][currentIndex].messages || []).concat(messages);
 
             response = 'Messages received. Add more messages or type "done" to finish:';
@@ -235,7 +235,20 @@ app.post('/chat', async (req, res) => {
     res.send({ reply: response });
 });
 
+// Socket.io connection
+io.on('connection', (socket) => {
+    console.log('A user connected');
+    socket.on('disconnect', () => {
+        console.log('User disconnected');
+    });
+
+    socket.on('chat message', (msg) => {
+        console.log('Message from client:', msg);
+        io.emit('chat message', msg);
+    });
+});
+
 // Start the server
 server.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
+    console.log(`Server running on http://localhost:${port}`);
 });
