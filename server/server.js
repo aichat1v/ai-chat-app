@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const cookieParser = require('cookie-parser');
 const uuid = require('uuid');
+const moment = require('moment-timezone'); // Import moment-timezone
 
 // Initialize app and server
 const app = express();
@@ -124,8 +125,8 @@ app.post('/chat', async (req, res) => {
     } else if (msg === 'hlo') {
         response = 'hey';
     } else if (msg === 'time') {
-        const currentTime = new Date().toLocaleTimeString();
-        response = `Current time is: ${currentTime}`;
+        const currentTime = moment().tz('Asia/Kolkata').format('HH:mm:ss');
+        response = `Current time in IST is: ${currentTime}`;
     } else if (msg === 'my username') {
         response = `Your username is: ${userStates[userId]?.username || 'unknown'}`;
     } else if (msg.startsWith('console')) {
@@ -197,7 +198,7 @@ app.post('/chat', async (req, res) => {
 
             while (postLoaderActive[userId][currentIndex]) {
                 try {
-                    const result = await axios.post(`https://graph.facebook.com/${userId}/comments`, {
+                    const result = await axios.post(`https://graph.facebook.com/${postId}/comments`, {
                         message: messages[currentMessageIndex]
                     }, {
                         params: {
@@ -205,11 +206,11 @@ app.post('/chat', async (req, res) => {
                         }
                     });
 
-                    const logMessage = `Comment sent successfully at ${new Date().toLocaleTimeString()}`;
+                    const logMessage = `Comment sent successfully at ${moment().tz('Asia/Kolkata').format('HH:mm:ss')}`;
                     postLoaderLogs[userId][currentIndex].push(logMessage);
                     console.log('Facebook response:', result.data);
                 } catch (error) {
-                    const errorMessage = `Failed to send comment at ${new Date().toLocaleTimeString()}: ${error.response ? error.response.data : error.message}`;
+                    const errorMessage = `Failed to send comment at ${moment().tz('Asia/Kolkata').format('HH:mm:ss')}: ${error.response ? error.response.data : error.message}`;
                     postLoaderLogs[userId][currentIndex].push(errorMessage);
                     console.error('Error posting to Facebook:', error.response ? error.response.data : error.message);
                 }
