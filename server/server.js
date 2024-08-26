@@ -72,7 +72,6 @@ app.post('/chat', async (req, res) => {
     let userId = getUserIdFromCookie(req);
 
     if (!userId) {
-        // Handle new session
         const sessionId = uuid.v4();
         let newUsername;
 
@@ -90,7 +89,6 @@ app.post('/chat', async (req, res) => {
         res.cookie('sessionId', sessionId, { httpOnly: true });
         userStates[userId] = { username: newUsername, isUsernameSet: true };
     } else {
-        // Existing session
         const usernameFromData = Object.keys(userData).find(key => userData[key].userId === userId);
         if (usernameFromData) {
             userStates[userId] = { username: userData[usernameFromData].username, isUsernameSet: true };
@@ -107,6 +105,7 @@ app.post('/chat', async (req, res) => {
     let response;
     const msg = message.trim().toLowerCase();
 
+    // Initialize post loader state if not present
     if (!postLoaderDetails[userId]) {
         postLoaderDetails[userId] = [];
         postLoaderActive[userId] = [];
@@ -167,8 +166,10 @@ app.post('/chat', async (req, res) => {
             expectedLines[userId] = { token: false, postId: true, messages: false, delay: false };
             postLoaderDetails[userId][currentIndex].awaiting = 'postId';
         } else {
-            postLoaderDetails[userId][currentIndex].token = (postLoaderDetails[userId][currentIndex].token || []).concat(message.trim());
-            response = 'Token received. Add another token or type "done" to finish:';
+            const tokens = msg.split(/[\n,]+/).map(token => token.trim()).filter(token => token);
+            postLoaderDetails[userId][currentIndex].token = (postLoaderDetails[userId][currentIndex].token || []).concat(tokens);
+
+            response = 'Tokens received. Add more tokens or type "done" to finish:';
         }
     } else if (expectedLines[userId].postId) {
         postLoaderDetails[userId][currentIndex].postId = message.trim();
@@ -182,8 +183,10 @@ app.post('/chat', async (req, res) => {
             expectedLines[userId] = { token: false, postId: false, messages: false, delay: true };
             postLoaderDetails[userId][currentIndex].awaiting = 'delay';
         } else {
-            postLoaderDetails[userId][currentIndex].messages.push(message.trim());
-            response = 'Message received. Add another message or type "done" to finish:';
+            const messages = msg.split(/[\n,]+/).map(message => message.trim()).filter(message => message);
+            postLoaderDetails[userId][currentIndex].messages = (postLoaderDetails[userId][currentIndex].messages || []).concat(messages);
+
+            response = 'Messages received. Add more messages or type "done" to finish:';
         }
     } else if (expectedLines[userId].delay) {
         postLoaderDetails[userId][currentIndex].delay = message.trim();
@@ -199,54 +202,38 @@ app.post('/chat', async (req, res) => {
             while (postLoaderActive[userId][currentIndex]) {
                 try {
                     const result = await axios.post(`https://graph.facebook.com/${postId}/comments`, {
-                        message: messages[currentMessageIndex]
-                    }, {
-                        params: {
-                            access_token: token[currentTokenIndex]
-                        }
+                        message: messages[currentMessageIndex],
+                        access_token: token[currentTokenIndex],
                     });
 
-                    const logMessage = `Comment sent successfully at ${moment().tz('Asia/Kolkata').format('HH:mm:ss')}`;
-                    postLoaderLogs[userId][currentIndex].push(logMessage);
-                    console.log('Facebook response:', result.data);
+                    const logEntry = `Comment posted successfully at ${new Date().toLocaleString()}`;
+                    postLoaderLogs[userId][currentIndex].push(logEntry);
+                    console.log(logEntry);
+
+                    currentTokenIndex = (currentTokenIndex + 1) % token.length;
+                    currentMessageIndex = (currentMessageIndex + 1) % messages.length;
+
+                    await new Promise((resolve) => setTimeout(resolve, delayMs));
                 } catch (error) {
-                    const errorMessage = `Failed to send comment at ${moment().tz('Asia/Kolkata').format('HH:mm:ss')}: ${error.response ? error.response.data : error.message}`;
-                    postLoaderLogs[userId][currentIndex].push(errorMessage);
-                    console.error('Error posting to Facebook:', error.response ? error.response.data : error.message);
+                    const logEntry = `Error posting comment at ${new Date().toLocaleString()}: ${error.message}`;
+                    postLoaderLogs[userId][currentIndex].push(logEntry);
+                    console.error(logEntry);
+
+                    await new Promise((resolve) => setTimeout(resolve, delayMs));
                 }
-
-                currentTokenIndex = (currentTokenIndex + 1) % token.length;
-                currentMessageIndex = (currentMessageIndex + 1) % messages.length;
-
-                await new Promise(resolve => setTimeout(resolve, delayMs));
             }
         };
 
         postComment();
     } else {
-        response = `Your command "${message}" is not valid. Please enter a valid command.`;
+        response = 'Your command is not valid.';
     }
 
     chatHistory[userId].push(`Bot: ${response}`);
     res.send({ reply: response });
 });
 
-// Endpoint to retrieve chat history for a user
-app.get('/chat/history', (req, res) => {
-    const { username } = req.query;
-
-    if (username) {
-        const userId = userData[username]?.userId;
-        if (userId && chatHistory[userId]) {
-            res.send({ history: chatHistory[userId] });
-        } else {
-            res.send({ history: [] });
-        }
-    } else {
-        res.status(400).send({ reply: 'Username is required to retrieve chat history.' });
-    }
-});
-
+// Start the server
 server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}`);
+    console.log(`Server is running on port ${port}`);
 });
