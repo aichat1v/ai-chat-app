@@ -23,6 +23,7 @@
     "openai": "^4.53.2",
     "redis": "^4.7.0",
     "socket.io": "^4.7.5",
-    "uuid": "^10.0.0"
+    "uuid": "^10.0.0",
+    "dotenv": "^10.0.0" // Added dotenv dependency
   }
 }
