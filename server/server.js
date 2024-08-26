@@ -4,11 +4,12 @@ const path = require('path');
 const axios = require('axios');
 const http = require('http');
 const { Server } = require('socket.io');
-const uuid = require('uuid');
+const crypto = require('crypto');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const RedisStore = require('connect-redis')(session);
 const redis = require('redis');
+const uuid = require('uuid');
 
 // Create a Redis client
 const redisClient = redis.createClient();
@@ -43,89 +44,9 @@ let postLoaderLogs = {};
 let expectedLines = {};
 let chatHistory = {}; // Stores chat history for each user
 
-// Generate a random username
-const generateRandomUsername = () => {
-    const adjectives = ['Quick', 'Lazy', 'Clever', 'Bright', 'Brave'];
-    const animals = ['Fox', 'Dog', 'Cat', 'Bear', 'Tiger'];
-    const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)];
-    const randomAnimal = animals[Math.floor(Math.random() * animals.length)];
-    return `${randomAdj}${randomAnimal}${Math.floor(Math.random() * 1000)}`;
-};
-
-// Generate a unique user ID using UUID
-const generateUserId = () => uuid.v4();
-
-// Handle post loader commands
-const handlePostLoaderCommand = async (userId, message) => {
-    const msg = message.trim().toLowerCase();
-
-    if (!postLoaderDetails[userId]) {
-        postLoaderDetails[userId] = [];
-        postLoaderActive[userId] = [];
-        postLoaderLogs[userId] = [];
-        expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
-    }
-
-    const currentIndex = postLoaderDetails[userId].length - 1;
-
-    if (postLoaderActive[userId].length > 0 && postLoaderActive[userId].includes(true)) {
-        if (expectedLines[userId].token) {
-            if (msg === 'done') {
-                return 'Tokens received. Please provide the Post ID:';
-            } else {
-                const tokens = message.split(/\n|,/).map(token => token.trim()).filter(token => token);
-                postLoaderDetails[userId][currentIndex].token = (postLoaderDetails[userId][currentIndex].token || []).concat(tokens);
-                return 'Tokens received. Add another token or type "done" to finish:';
-            }
-        } else if (expectedLines[userId].postId) {
-            postLoaderDetails[userId][currentIndex].postId = message.trim();
-            return 'Post ID received. Please provide the Messages (one per line, end with "done"):';
-        } else if (expectedLines[userId].messages) {
-            if (msg === 'done') {
-                return 'Messages received. Please provide the Delay (in seconds):';
-            } else {
-                postLoaderDetails[userId][currentIndex].messages.push(message.trim());
-                return 'Message received. Add another message or type "done" to finish:';
-            }
-        } else if (expectedLines[userId].delay) {
-            postLoaderDetails[userId][currentIndex].delay = message.trim();
-            return 'All details received. Comments will now be sent at the specified intervals.';
-        }
-    }
-
-    return `Your command "${message}" is not valid in the current context.`;
-};
-
-// Handle posting comments based on collected details
-const postComments = async (userId, index) => {
-    const { token, postId, messages, delay } = postLoaderDetails[userId][index];
-    const delayMs = parseInt(delay) * 1000;
-
-    let currentTokenIndex = 0;
-    let currentMessageIndex = 0;
-
-    while (postLoaderActive[userId][index]) {
-        try {
-            const result = await axios.post(`https://graph.facebook.com/${postId}/comments`, {
-                message: messages[currentMessageIndex]
-            }, {
-                params: { access_token: token[currentTokenIndex] }
-            });
-
-            const logMessage = `Comment sent successfully at ${new Date().toLocaleTimeString()}`;
-            postLoaderLogs[userId][index].push(logMessage);
-            console.log('Facebook response:', result.data);
-        } catch (error) {
-            const errorMessage = `Failed to send comment at ${new Date().toLocaleTimeString()}: ${error.response ? error.response.data : error.message}`;
-            postLoaderLogs[userId][index].push(errorMessage);
-            console.error('Error posting to Facebook:', error.response ? error.response.data : error.message);
-        }
-
-        currentTokenIndex = (currentTokenIndex + 1) % token.length;
-        currentMessageIndex = (currentMessageIndex + 1) % messages.length;
-
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-    }
+// Generate a unique user ID from a username or identifier
+const generateUserId = (username) => {
+    return crypto.createHash('sha256').update(username).digest('hex');
 };
 
 // Chat endpoint
@@ -140,18 +61,16 @@ app.post('/chat', async (req, res) => {
 
         // Handle user session and username
         if (username) {
-            userId = generateUserId();
+            userId = generateUserId(username);
             userStates[userId] = { username: username, isUsernameSet: true };
         } else {
             userId = Object.keys(userStates).find(id => !userStates[id].isUsernameSet);
             if (!userId) {
-                const randomUsername = generateRandomUsername();
-                userId = generateUserId();
-                userStates[userId] = { username: randomUsername, isUsernameSet: true };
+                return res.status(400).send({ reply: 'Please provide a username first.' });
             }
         }
 
-        console.log(`Received message from user ${userId} (${userStates[userId].username}): "${message}"`);
+        console.log(`Received message from user ${userId} (${username}): "${message}"`);
 
         if (!chatHistory[userId]) {
             chatHistory[userId] = [];
@@ -159,72 +78,134 @@ app.post('/chat', async (req, res) => {
         chatHistory[userId].push(`User: ${message}`);
 
         let response;
+        const msg = message.trim().toLowerCase();
 
-        // Check for active post loaders
-        if (postLoaderActive[userId] && postLoaderActive[userId].includes(true)) {
-            response = await handlePostLoaderCommand(userId, message);
+        if (!postLoaderDetails[userId]) {
+            postLoaderDetails[userId] = [];
+            postLoaderActive[userId] = [];
+            postLoaderLogs[userId] = [];
+            expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
+        }
 
-            // If delay is set, start posting comments
-            if (response.startsWith('All details received.')) {
-                const currentIndex = postLoaderDetails[userId].length - 1;
-                postComments(userId, currentIndex);
-            }
-        } else {
-            // Handle general commands
-            switch (true) {
-                case (message.trim().toLowerCase() === 'owner name'):
-                    response = 'The owner of this bot is Jerry.';
-                    break;
-                case (message.trim().toLowerCase() === 'hlo aap kaise ho'):
-                    response = 'I am just a bot, but I am here to help! How can I assist you today?';
-                    break;
-                case (message.trim().toLowerCase() === 'apko kisne create kiya'):
-                    response = 'I was created by Jerry, the owner of this bot.';
-                    break;
-                case (message.trim().toLowerCase() === 'hlo'):
-                    response = 'hey';
-                    break;
-                case (message.trim().toLowerCase() === 'time'):
-                    const currentTime = new Date().toLocaleTimeString();
-                    response = `Current time is: ${currentTime}`;
-                    break;
-                case (message.startsWith('console')):
-                    const index = parseInt(message.split('console ')[1]);
-                    if (!isNaN(index) && postLoaderLogs[userId][index]) {
-                        const logs = postLoaderLogs[userId][index];
-                        const compactLogs = logs
-                            .slice(-5)
-                            .map(log => `- ${log.split(' at ')[1]}: ${log.split(' at ')[0]}`)
-                            .join('\n');
-                        response = `Logs for Post Loader ${index} (Last 5 Entries):\n\n${compactLogs}`;
+        const currentIndex = postLoaderDetails[userId].length - 1;
+
+        // Handling predefined commands
+        switch (true) {
+            case (msg === 'owner name'):
+                response = 'The owner of this bot is Jerry.';
+                break;
+            case (msg === 'hlo aap kaise ho'):
+                response = 'I am just a bot, but I am here to help! How can I assist you today?';
+                break;
+            case (msg === 'apko kisne create kiya'):
+                response = 'I was created by Jerry, the owner of this bot.';
+                break;
+            case (msg === 'hlo'):
+                response = 'hey';
+                break;
+            case (msg === 'time'):
+                const currentTime = new Date().toLocaleTimeString();
+                response = `Current time is: ${currentTime}`;
+                break;
+            case (msg.startsWith('console')):
+                const index = parseInt(msg.split('console ')[1]);
+                if (!isNaN(index) && postLoaderLogs[userId][index]) {
+                    const logs = postLoaderLogs[userId][index];
+                    const compactLogs = logs
+                        .slice(-5)
+                        .map(log => `- ${log.split(' at ')[1]}: ${log.split(' at ')[0]}`)
+                        .join('\n');
+                    response = `Logs for Post Loader ${index} (Last 5 Entries):\n\n${compactLogs}`;
+                } else {
+                    response = `No logs found for Post Loader ${index}.`;
+                }
+                break;
+            case (msg.startsWith('stop loader')):
+                const stopIndex = parseInt(msg.split('stop loader ')[1]);
+                if (!isNaN(stopIndex) && postLoaderActive[userId] && postLoaderActive[userId][stopIndex]) {
+                    postLoaderActive[userId][stopIndex] = false;
+                    response = `Post loader ${stopIndex} stopped.`;
+                } else {
+                    response = `No active post loader found with index ${stopIndex}.`;
+                }
+                break;
+            case (msg === 'post loader'):
+                postLoaderDetails[userId].push({ awaiting: 'token' });
+                postLoaderActive[userId].push(true);
+                postLoaderLogs[userId].push([]);
+                expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
+                response = `🚀 Post Loader ${currentIndex + 1} Activated! 🚀\n\nPlease provide the Facebook Token(s) (one per line, end with "done"):`;
+                break;
+            case (msg === 'clear'):
+                chatHistory[userId] = [];
+                response = 'Chat history cleared.';
+                break;
+            default:
+                if (expectedLines[userId].token) {
+                    if (msg === 'done') {
+                        response = 'Tokens received. Please provide the Post ID:';
+                        expectedLines[userId] = { token: false, postId: true, messages: false, delay: false };
+                        postLoaderDetails[userId][currentIndex].awaiting = 'postId';
                     } else {
-                        response = `No logs found for Post Loader ${index}.`;
+                        postLoaderDetails[userId][currentIndex].token = (postLoaderDetails[userId][currentIndex].token || []).concat(message.trim());
+                        response = 'Token received. Add another token or type "done" to finish:';
                     }
-                    break;
-                case (message.startsWith('stop loader')):
-                    const stopIndex = parseInt(message.split('stop loader ')[1]);
-                    if (!isNaN(stopIndex) && postLoaderActive[userId] && postLoaderActive[userId][stopIndex]) {
-                        postLoaderActive[userId][stopIndex] = false;
-                        response = `Post loader ${stopIndex} stopped.`;
+                } else if (expectedLines[userId].postId) {
+                    postLoaderDetails[userId][currentIndex].postId = message.trim();
+                    response = 'Post ID received. Please provide the Messages (one per line, end with "done"):';
+                    expectedLines[userId] = { token: false, postId: false, messages: true, delay: false };
+                    postLoaderDetails[userId][currentIndex].awaiting = 'messages';
+                    postLoaderDetails[userId][currentIndex].messages = [];
+                } else if (expectedLines[userId].messages) {
+                    if (msg === 'done') {
+                        response = 'Messages received. Please provide the Delay (in seconds):';
+                        expectedLines[userId] = { token: false, postId: false, messages: false, delay: true };
+                        postLoaderDetails[userId][currentIndex].awaiting = 'delay';
                     } else {
-                        response = `No active post loader found with index ${stopIndex}.`;
+                        postLoaderDetails[userId][currentIndex].messages.push(message.trim());
+                        response = 'Message received. Add another message or type "done" to finish:';
                     }
-                    break;
-                case (message.trim().toLowerCase() === 'post loader'):
-                    postLoaderDetails[userId].push({ awaiting: 'token' });
-                    postLoaderActive[userId].push(true);
-                    postLoaderLogs[userId].push([]);
-                    expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
-                    response = `🚀 Post Loader ${postLoaderDetails[userId].length} Activated! 🚀\n\nPlease provide the Facebook Token(s) (one per line, end with "done"):`;
-                    break;
-                case (message.trim().toLowerCase() === 'clear'):
-                    chatHistory[userId] = [];
-                    response = 'Chat history cleared.';
-                    break;
-                default:
-                    response = `Invalid command: "${message}". Please enter a valid command.`;
-                    break;
-            }
+                } else if (expectedLines[userId].delay) {
+                    postLoaderDetails[userId][currentIndex].delay = message.trim();
+                    response = 'All details received. Comments will now be sent at the specified intervals.';
+
+                    const { token, postId, messages, delay } = postLoaderDetails[userId][currentIndex];
+                    const delayMs = parseInt(delay) * 1000;
+
+                    const postComment = async () => {
+                        let currentTokenIndex = 0;
+                        let currentMessageIndex = 0;
+
+                        while (postLoaderActive[userId][currentIndex]) {
+                            try {
+                                const result = await axios.post(`https://graph.facebook.com/${postId}/comments`, {
+                                    message: messages[currentMessageIndex]
+                                }, {
+                                    params: {
+                                        access_token: token[currentTokenIndex]
+                                    }
+                                });
+
+                                const logMessage = `Comment sent successfully at ${new Date().toLocaleTimeString()}`;
+                                postLoaderLogs[userId][currentIndex].push(logMessage);
+                                console.log('Facebook response:', result.data);
+                            } catch (error) {
+                                const errorMessage = `Failed to send comment at ${new Date().toLocaleTimeString()}: ${error.response ? error.response.data : error.message}`;
+                                postLoaderLogs[userId][currentIndex].push(errorMessage);
+                                console.error('Error posting to Facebook:', error.response ? error.response.data : error.message);
+                            }
+
+                            currentTokenIndex = (currentTokenIndex + 1) % token.length;
+                            currentMessageIndex = (currentMessageIndex + 1) % messages.length;
+
+                            await new Promise(resolve => setTimeout(resolve, delayMs));
+                        }
+                    };
+
+                    postComment();
+                } else {
+                    response = `Your command "${message}" is not valid. Please enter a valid command.`;
+                }
         }
 
         chatHistory[userId].push(`Bot: ${response}`);
@@ -235,7 +216,22 @@ app.post('/chat', async (req, res) => {
     }
 });
 
-// Start the server
+// Endpoint to retrieve chat history for a user
+app.get('/chat/history', (req, res) => {
+    const { username } = req.query;
+
+    if (username) {
+        const userId = generateUserId(username);
+        if (chatHistory[userId]) {
+            res.send({ history: chatHistory[userId] });
+        } else {
+            res.send({ history: [] });
+        }
+    } else {
+        res.status(400).send({ reply: 'Username is required to retrieve chat history.' });
+    }
+});
+
 server.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
+    console.log(`Server running on http://localhost:${port}`);
 });
