@@ -72,6 +72,7 @@ app.post('/chat', async (req, res) => {
     let userId = getUserIdFromCookie(req);
 
     if (!userId) {
+        // Handle new session
         const sessionId = uuid.v4();
         let newUsername;
 
@@ -89,6 +90,7 @@ app.post('/chat', async (req, res) => {
         res.cookie('sessionId', sessionId, { httpOnly: true });
         userStates[userId] = { username: newUsername, isUsernameSet: true };
     } else {
+        // Existing session
         const usernameFromData = Object.keys(userData).find(key => userData[key].userId === userId);
         if (usernameFromData) {
             userStates[userId] = { username: userData[usernameFromData].username, isUsernameSet: true };
@@ -105,7 +107,6 @@ app.post('/chat', async (req, res) => {
     let response;
     const msg = message.trim().toLowerCase();
 
-    // Initialize post loader state if not present
     if (!postLoaderDetails[userId]) {
         postLoaderDetails[userId] = [];
         postLoaderActive[userId] = [];
@@ -115,7 +116,6 @@ app.post('/chat', async (req, res) => {
 
     const currentIndex = postLoaderDetails[userId].length - 1;
 
-    // Handle commands
     if (msg === 'owner name') {
         response = 'The owner of this bot is Jerry.';
     } else if (msg === 'hlo aap kaise ho') {
@@ -157,30 +157,33 @@ app.post('/chat', async (req, res) => {
         postLoaderLogs[userId].push([]);
         expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
 
-        response = `🚀 Post Loader ${currentIndex + 1} Activated! 🚀\n\nPlease provide the Facebook Token(s) (one per line):`;
+        response = `🚀 Post Loader ${currentIndex + 1} Activated! 🚀\n\nPlease provide the Facebook Token(s) (one per line, end with "done"):`;
     } else if (msg === 'clear') {
         chatHistory[userId] = [];
         response = 'Chat history cleared.';
     } else if (expectedLines[userId].token) {
-        const tokens = msg.split(/\n+/).map(token => token.trim()).filter(token => token);
-        if (tokens.length) {
-            postLoaderDetails[userId][currentIndex].token = (postLoaderDetails[userId][currentIndex].token || []).concat(tokens);
+        if (msg === 'done') {
             response = 'Tokens received. Please provide the Post ID:';
             expectedLines[userId] = { token: false, postId: true, messages: false, delay: false };
             postLoaderDetails[userId][currentIndex].awaiting = 'postId';
+        } else {
+            postLoaderDetails[userId][currentIndex].token = (postLoaderDetails[userId][currentIndex].token || []).concat(message.trim());
+            response = 'Token received. Add another token or type "done" to finish:';
         }
     } else if (expectedLines[userId].postId) {
         postLoaderDetails[userId][currentIndex].postId = message.trim();
-        response = 'Post ID received. Please provide the Messages (one per line):';
+        response = 'Post ID received. Please provide the Messages (one per line, end with "done"):';
         expectedLines[userId] = { token: false, postId: false, messages: true, delay: false };
         postLoaderDetails[userId][currentIndex].awaiting = 'messages';
+        postLoaderDetails[userId][currentIndex].messages = [];
     } else if (expectedLines[userId].messages) {
-        const messages = msg.split(/\n+/).map(message => message.trim()).filter(message => message);
-        if (messages.length) {
-            postLoaderDetails[userId][currentIndex].messages = (postLoaderDetails[userId][currentIndex].messages || []).concat(messages);
+        if (msg === 'done') {
             response = 'Messages received. Please provide the Delay (in seconds):';
             expectedLines[userId] = { token: false, postId: false, messages: false, delay: true };
             postLoaderDetails[userId][currentIndex].awaiting = 'delay';
+        } else {
+            postLoaderDetails[userId][currentIndex].messages.push(message.trim());
+            response = 'Message received. Add another message or type "done" to finish:';
         }
     } else if (expectedLines[userId].delay) {
         postLoaderDetails[userId][currentIndex].delay = message.trim();
@@ -221,27 +224,29 @@ app.post('/chat', async (req, res) => {
 
         postComment();
     } else {
-        response = 'Your command is not valid.';
+        response = `Your command "${message}" is not valid. Please enter a valid command.`;
     }
 
     chatHistory[userId].push(`Bot: ${response}`);
     res.send({ reply: response });
 });
 
-// Socket.io connection
-io.on('connection', (socket) => {
-    console.log('A user connected');
-    socket.on('disconnect', () => {
-        console.log('User disconnected');
-    });
+// Endpoint to retrieve chat history for a user
+app.get('/chat/history', (req, res) => {
+    const { username } = req.query;
 
-    socket.on('chat message', (msg) => {
-        console.log('Message from client:', msg);
-        io.emit('chat message', msg);
-    });
+    if (username) {
+        const userId = userData[username]?.userId;
+        if (userId && chatHistory[userId]) {
+            res.send({ history: chatHistory[userId] });
+        } else {
+            res.send({ history: [] });
+        }
+    } else {
+        res.status(400).send({ reply: 'Username is required to retrieve chat history.' });
+    }
 });
 
-// Start the server
 server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}`);
-});
+}); 
