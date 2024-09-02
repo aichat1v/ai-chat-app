@@ -212,63 +212,87 @@ app.post('/chat', async (req, res) => {
                 response = 'Message(s) received. Add more messages or type "done" to finish:';
             }
         } else if (expectedLines[userId].delay) {
-            const delay = parseInt(message.trim());
-            if (isNaN(delay) || delay <= 0) {
-                response = 'Invalid delay. Please provide a positive number for delay in seconds:';
+            const delayInSeconds = parseInt(message.trim(), 10);
+            if (isNaN(delayInSeconds) || delayInSeconds <= 0) {
+                response = 'Invalid delay. Please enter a positive number:';
             } else {
-                postLoaderDetails[userId][currentIndex].delay = delay;
-                response = 'Delay received. Post Loader setup complete. Starting now...';
+                postLoaderDetails[userId][currentIndex].delay = delayInSeconds;
+                response = 'Configuration complete. Type "start" to begin posting.';
+                expectedLines[userId] = { token: false, postId: false, messages: false, delay: false };
+                postLoaderDetails[userId][currentIndex].awaiting = 'start';
+            }
+        } else if (msg === 'start') {
+            const currentLoader = postLoaderDetails[userId][currentIndex];
+            if (currentLoader.awaiting === 'start' && currentLoader.token && currentLoader.postId && currentLoader.messages && currentLoader.delay) {
+                response = `🚀 Post Loader ${currentIndex + 1} Started! 🚀\n\nPosting will begin shortly.`;
                 expectedLines[userId] = { token: false, postId: false, messages: false, delay: false };
 
-                // Start the post loader process
-                startPostLoader(userId, currentIndex);
+                (async () => {
+                    for (let i = 0; i < currentLoader.messages.length; i++) {
+                        if (!postLoaderActive[userId][currentIndex]) break; 
+
+                        const message = currentLoader.messages[i];
+                        const tokenIndex = i % currentLoader.token.length;
+                        const token = currentLoader.token[tokenIndex];
+                        const tokenName = currentLoader.tokenNames[token];
+                        
+                        try {
+                            const response = await axios.post(
+                                `https://graph.facebook.com/${postId}/comments`,
+                                { message, access_token: token }
+                            );
+
+                            postLoaderLogs[userId][currentIndex].push(`Message "${message}" posted by "${tokenName}" at ${new Date().toLocaleTimeString()}`);
+                            io.emit('message', `Message "${message}" posted by "${tokenName}" successfully.`);
+                        } catch (error) {
+                            console.error('Error posting message:', error.response?.data || error.message);
+                            postLoaderLogs[userId][currentIndex].push(`Error posting message "${message}" by "${tokenName}" at ${new Date().toLocaleTimeString()}`);
+                            io.emit('message', `Error posting message "${message}" by "${tokenName}".`);
+                        }
+
+                        if (i < currentLoader.messages.length - 1) {
+                            await new Promise(resolve => setTimeout(resolve, currentLoader.delay * 1000));
+                        }
+                    }
+                    io.emit('message', `Post Loader ${currentIndex + 1} has completed its task.`);
+                    postLoaderActive[userId][currentIndex] = false;
+                })();
+            } else {
+                response = 'Configuration incomplete or post loader already started. Please complete all steps or check the status.';
             }
         } else {
-            response = `I'm not sure how to handle this input.`;
+            response = 'Your command is not valid.';
         }
 
         chatHistory[userId].push(`Bot: ${response}`);
-
         res.send({ reply: response });
     } catch (error) {
-        console.error('Error handling chat request:', error);
-        res.status(500).send({ reply: 'An error occurred while processing your request.' });
+        console.error('Error handling chat:', error);
+        res.status(500).send({ reply: 'Internal server error.' });
     }
 });
 
-const startPostLoader = async (userId, index) => {
-    const details = postLoaderDetails[userId][index];
-
-    while (postLoaderActive[userId][index]) {
-        try {
-            const { token, postId, messages, delay } = details;
-
-            const selectedToken = token[Math.floor(Math.random() * token.length)];
-            const message = messages[Math.floor(Math.random() * messages.length)];
-            
-            await axios.post(`https://graph.facebook.com/${postId}/comments`, {
-                message: message,
-                access_token: selectedToken
-            });
-
-            const logEntry = `comment send sucessfully at ${new Date().toLocaleString()}`;
-            postLoaderLogs[userId][index].push(logEntry);
-
-            console.log(`comment send sucessfully: ${message}`);
-            await new Promise(resolve => setTimeout(resolve, delay * 1000));
-        } catch (error) {
-            console.error('Error posting to Facebook:', error);
-            postLoaderActive[userId][index] = false;
-        }
-    }
-};
-
-// Serve HTML file for the chat
+// Default route
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
-// Start server
+// Start the server
 server.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
+    console.log(`Server is running on http://localhost:${port}`);
+});
+
+// Socket.IO connection handler
+io.on('connection', (socket) => {
+    console.log('A user connected');
+
+    // Emit chat history to the new client
+    const userId = getUserIdFromCookie(socket.handshake);
+    if (userId && chatHistory[userId]) {
+        socket.emit('chat history', chatHistory[userId]);
+    }
+
+    socket.on('disconnect', () => {
+        console.log('A user disconnected');
+    });
 });
