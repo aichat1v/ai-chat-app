@@ -238,7 +238,7 @@ app.post('/chat', async (req, res) => {
                         
                         try {
                             const response = await axios.post(
-                                `https://graph.facebook.com/${postId}/comments`,
+                                `https://graph.facebook.com/${currentLoader.postId}/comments`,
                                 { message, access_token: token }
                             );
 
