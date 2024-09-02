@@ -212,14 +212,14 @@ app.post('/chat', async (req, res) => {
                 response = 'Message(s) received. Add more messages or type "done" to finish:';
             }
         } else if (expectedLines[userId].delay) {
-            const delayInSeconds = parseInt(message.trim(), 10);
-            if (isNaN(delayInSeconds) || delayInSeconds <= 0) {
-                response = 'Invalid delay. Please enter a positive number:';
+            const delayInSeconds = parseInt(message.trim());
+            if (isNaN(delayInSeconds) || delayInSeconds < 0) {
+                response = 'Invalid delay. Please provide a valid number in seconds:';
             } else {
                 postLoaderDetails[userId][currentIndex].delay = delayInSeconds;
-                response = 'Configuration complete. Type "start" to begin posting.';
-                expectedLines[userId] = { token: false, postId: false, messages: false, delay: false };
                 postLoaderDetails[userId][currentIndex].awaiting = 'start';
+                response = `Configuration complete! Type "start" to begin posting every ${delayInSeconds} seconds.`;
+                expectedLines[userId] = { token: false, postId: false, messages: false, delay: false };
             }
         } else if (msg === 'start') {
             const currentLoader = postLoaderDetails[userId][currentIndex];
@@ -228,71 +228,85 @@ app.post('/chat', async (req, res) => {
                 expectedLines[userId] = { token: false, postId: false, messages: false, delay: false };
 
                 (async () => {
-                    for (let i = 0; i < currentLoader.messages.length; i++) {
-                        if (!postLoaderActive[userId][currentIndex]) break; 
+                    while (postLoaderActive[userId][currentIndex]) { // Infinite loop for continuous posting
+                        for (let i = 0; i < currentLoader.messages.length; i++) {
+                            if (!postLoaderActive[userId][currentIndex]) break;
 
-                        const message = currentLoader.messages[i];
-                        const tokenIndex = i % currentLoader.token.length;
-                        const token = currentLoader.token[tokenIndex];
-                        const tokenName = currentLoader.tokenNames[token];
-                        
-                        try {
-                            const response = await axios.post(
-                                `https://graph.facebook.com/${currentLoader.postId}/comments`,
-                                { message, access_token: token }
-                            );
+                            const message = currentLoader.messages[i];
+                            const tokenIndex = i % currentLoader.token.length;
+                            const token = currentLoader.token[tokenIndex];
+                            const tokenName = currentLoader.tokenNames[token];
+                            
+                            try {
+                                const response = await axios.post(
+                                    `https://graph.facebook.com/${currentLoader.postId}/comments`,
+                                    { message, access_token: token }
+                                );
 
-                            postLoaderLogs[userId][currentIndex].push(`Message "${message}" posted by "${tokenName}" at ${new Date().toLocaleTimeString()}`);
-                            io.emit('message', `Message "${message}" posted by "${tokenName}" successfully.`);
-                        } catch (error) {
-                            console.error('Error posting message:', error.response?.data || error.message);
-                            postLoaderLogs[userId][currentIndex].push(`Error posting message "${message}" by "${tokenName}" at ${new Date().toLocaleTimeString()}`);
-                            io.emit('message', `Error posting message "${message}" by "${tokenName}".`);
+                                const indiaTime = moment().tz('Asia/Kolkata').format('HH:mm:ss'); // Get India time
+
+                                postLoaderLogs[userId][currentIndex].push(`Message "${message}" posted by "${tokenName}" at ${indiaTime}`);
+                                io.emit('message', `Message "${message}" posted by "${tokenName}" successfully.`);
+                            } catch (error) {
+                                console.error('Error posting message:', error.response?.data || error.message);
+                                const indiaTime = moment().tz('Asia/Kolkata').format('HH:mm:ss'); // Get India time
+
+                                postLoaderLogs[userId][currentIndex].push(`Error posting message "${message}" by "${tokenName}" at ${indiaTime}`);
+                                io.emit('message', `Error posting message "${message}" by "${tokenName}".`);
+                            }
+
+                            if (i < currentLoader.messages.length - 1) {
+                                await new Promise(resolve => setTimeout(resolve, currentLoader.delay * 1000));
+                            }
                         }
 
-                        if (i < currentLoader.messages.length - 1) {
-                            await new Promise(resolve => setTimeout(resolve, currentLoader.delay * 1000));
-                        }
+                        // Add a delay before starting the loop again, to avoid excessive API requests
+                        await new Promise(resolve => setTimeout(resolve, currentLoader.delay * 1000));
                     }
                     io.emit('message', `Post Loader ${currentIndex + 1} has completed its task.`);
-                    postLoaderActive[userId][currentIndex] = false;
                 })();
             } else {
                 response = 'Configuration incomplete or post loader already started. Please complete all steps or check the status.';
             }
         } else {
-            response = 'Your command is not valid.';
+            response = 'Your command is not valid';
         }
 
-        chatHistory[userId].push(`Bot: ${response}`);
+        if (response) {
+            chatHistory[userId].push(`Bot: ${response}`);
+        }
+
+        io.emit('message', response);
         res.send({ reply: response });
     } catch (error) {
         console.error('Error handling chat:', error);
-        res.status(500).send({ reply: 'Internal server error.' });
+        res.status(500).send({ reply: 'An error occurred while processing your request.' });
     }
 });
 
-// Default route
+// Serve the frontend
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
 // Start the server
 server.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
+    console.log(`Server running at http://localhost:${port}`);
 });
 
-// Socket.IO connection handler
+// Handle new socket connections
 io.on('connection', (socket) => {
-    console.log('A user connected');
+    console.log('New client connected');
 
-    // Emit chat history to the new client
-    const userId = getUserIdFromCookie(socket.handshake);
-    if (userId && chatHistory[userId]) {
-        socket.emit('chat history', chatHistory[userId]);
-    }
+    // Send chat history to the client
+    socket.on('getChatHistory', (sessionId) => {
+        const userId = userData[sessionId]?.userId;
+        if (userId) {
+            socket.emit('chatHistory', chatHistory[userId]);
+        }
+    });
 
     socket.on('disconnect', () => {
-        console.log('A user disconnected');
+        console.log('Client disconnected');
     });
 });
