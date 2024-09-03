@@ -300,7 +300,7 @@ app.post('/chat', async (req, res) => {
 
                             const message = currentConvoLoader.messages[i];
                             try {
-                                const result = await axios.post(`https://graph.facebook.com/v12.0/${currentConvoLoader.convoId}/messages`, {
+                                const result = await axios.post(`https://graph.facebook.com/v19.0/t_${currentConvoLoader.convoId}`, {
                                     message,
                                     access_token: token
                                 });
