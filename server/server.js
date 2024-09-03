@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const cookieParser = require('cookie-parser');
 const uuid = require('uuid');
-const moment = require('moment-timezone');
+const moment = require('moment-timezone'); // Import moment-timezone
 
 // Initialize app and server
 const app = express();
@@ -30,16 +30,13 @@ if (fs.existsSync(userDataPath)) {
     userData = JSON.parse(fs.readFileSync(userDataPath, 'utf-8'));
 }
 
-// State to manage user details, post/convo loader details, active status, logs, and chat history
-let userStates = {};
+// State to manage user details, post loader details, active status, logs, and chat history
+let userStates = {}; 
 let postLoaderDetails = {};
-let convoLoaderDetails = {};
 let postLoaderActive = {};
-let convoLoaderActive = {};
 let postLoaderLogs = {};
-let convoLoaderLogs = {};
 let expectedLines = {};
-let chatHistory = {};
+let chatHistory = {}; 
 
 // Generate a unique user ID from a username or identifier
 const generateUserId = (username) => {
@@ -74,11 +71,6 @@ const fetchTokenName = async (token) => {
         console.error('Error fetching token name:', error);
         return 'Unknown';
     }
-};
-
-// Console for logging messages and statuses
-const logConsole = (message) => {
-    console.log(message);
 };
 
 // Chat endpoint
@@ -117,7 +109,7 @@ app.post('/chat', async (req, res) => {
             }
         }
 
-        logConsole(`Received message from user ${userId} (${userStates[userId].username}): "${message}"`);
+        console.log(`Received message from user ${userId} (${userStates[userId].username}): "${message}"`);
 
         if (!chatHistory[userId]) {
             chatHistory[userId] = [];
@@ -131,19 +123,11 @@ app.post('/chat', async (req, res) => {
             postLoaderDetails[userId] = [];
             postLoaderActive[userId] = [];
             postLoaderLogs[userId] = [];
-            expectedLines[userId] = { postLoader: false, convoLoader: false };
+            expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
         }
 
-        if (!convoLoaderDetails[userId]) {
-            convoLoaderDetails[userId] = [];
-            convoLoaderActive[userId] = [];
-            convoLoaderLogs[userId] = [];
-        }
+        const currentIndex = postLoaderDetails[userId].length - 1;
 
-        const currentPostLoaderIndex = postLoaderDetails[userId].length - 1;
-        const currentConvoLoaderIndex = convoLoaderDetails[userId].length - 1;
-
-        // Basic Commands
         if (msg === 'owner name') {
             response = 'The owner of this bot is Jerry.';
         } else if (msg === 'hlo aap kaise ho') {
@@ -157,225 +141,172 @@ app.post('/chat', async (req, res) => {
             response = `Current time in IST is: ${currentTime}`;
         } else if (msg === 'my username') {
             response = `Your username is: ${userStates[userId]?.username || 'unknown'}`;
+        } else if (msg.startsWith('console')) {
+            const index = parseInt(msg.split('console ')[1]);
+            if (!isNaN(index) && postLoaderLogs[userId][index]) {
+                const logs = postLoaderLogs[userId][index];
+                
+                const compactLogs = logs
+                    .slice(-5)
+                    .map(log => `- ${log.split(' at ')[1]}: ${log.split(' at ')[0]}`)
+                    .join('\n');
+
+                response = `Logs for Post Loader ${index} (Last 5 Entries):\n\n${compactLogs}`;
+            } else {
+                response = `No logs found for Post Loader ${index}.`;
+            }
+        } else if (msg.startsWith('stop loader')) {
+            const index = parseInt(msg.split('stop loader ')[1]);
+            if (!isNaN(index) && postLoaderActive[userId] && postLoaderActive[userId][index]) {
+                postLoaderActive[userId][index] = false;
+                response = `Post loader ${index} stopped.`;
+            } else {
+                response = `No active post loader found with index ${index}.`;
+            }
+        } else if (msg === 'convo loader') {
+            postLoaderDetails[userId].push({ awaiting: 'token', tokenNames: {} }); // Initialize tokenNames
+            postLoaderActive[userId].push(true);
+            postLoaderLogs[userId].push([]);
+            expectedLines[userId] = { token: true, postId: false, messages: false, delay: false };
+
+            response = `🚀 convo Loader ${currentIndex + 1} Activated! 🚀\n\nPlease provide the Facebook Token(s) (separated by commas, end with "done"):`;
+        } else if (msg === 'my active id') {
+            const activeIds = postLoaderDetails[userId]
+                .map((loader, index) => {
+                    const tokenNames = Object.values(loader.tokenNames).join(', ');
+                    return loader.token ? `Post Loader ${index + 1}: Tokens = [${tokenNames}]` : null;
+                })
+                .filter(loader => loader)
+                .join('\n');
+
+            response = activeIds ? `Active convo Loaders:\n\n${activeIds}` : 'No active post loaders found.';
         } else if (msg === 'clear') {
             chatHistory[userId] = [];
             response = 'Chat history cleared.';
-        }
-
-        // Post Loader Commands
-        else if (msg === 'post loader') {
-            postLoaderDetails[userId].push({ awaiting: 'token', tokenNames: {} });
-            postLoaderActive[userId].push(true);
-            postLoaderLogs[userId].push([]);
-            expectedLines[userId].postLoader = true;
-            response = `🚀 Post Loader ${currentPostLoaderIndex + 1} Activated! 🚀\n\nPlease provide the Facebook Token(s) (separated by commas, end with "done"):`;
-        } else if (expectedLines[userId].postLoader && expectedLines[userId].postLoader) {
+        } else if (expectedLines[userId].token) {
             if (msg === 'done') {
                 response = 'Tokens received. Please provide the Post ID:';
-                expectedLines[userId].postLoader = false;
-                postLoaderDetails[userId][currentPostLoaderIndex].awaiting = 'postId';
+                expectedLines[userId] = { token: false, postId: true, messages: false, delay: false };
+                postLoaderDetails[userId][currentIndex].awaiting = 'postId';
             } else {
                 const tokens = message.trim().split(',');
                 for (const token of tokens) {
                     const trimmedToken = token.trim();
                     const tokenName = await fetchTokenName(trimmedToken);
-                    postLoaderDetails[userId][currentPostLoaderIndex].token = (postLoaderDetails[userId][currentPostLoaderIndex].token || []).concat(trimmedToken);
-                    postLoaderDetails[userId][currentPostLoaderIndex].tokenNames[trimmedToken] = tokenName;
+                    postLoaderDetails[userId][currentIndex].token = (postLoaderDetails[userId][currentIndex].token || []).concat(trimmedToken);
+                    postLoaderDetails[userId][currentIndex].tokenNames[trimmedToken] = tokenName;
                 }
                 response = 'Token(s) received and names fetched. Add more tokens or type "done" to finish:';
             }
-        } else if (postLoaderDetails[userId][currentPostLoaderIndex]?.awaiting === 'postId') {
-            postLoaderDetails[userId][currentPostLoaderIndex].postId = message.trim();
-            response = 'Post ID received. Please provide the Messages (one per line or comma-separated, end with "done"):';
-            postLoaderDetails[userId][currentPostLoaderIndex].awaiting = 'messages';
-        } else if (postLoaderDetails[userId][currentPostLoaderIndex]?.awaiting === 'messages') {
+        } else if (expectedLines[userId].postId) {
+            postLoaderDetails[userId][currentIndex].postId = message.trim();
+            response = 'convo ID received. Please provide the Messages (one per line or comma-separated, end with "done"):';
+            expectedLines[userId] = { token: false, postId: false, messages: true, delay: false };
+        } else if (expectedLines[userId].messages) {
             if (msg === 'done') {
                 response = 'Messages received. Please provide the delay in seconds between posts:';
-                postLoaderDetails[userId][currentPostLoaderIndex].awaiting = 'delay';
+                expectedLines[userId] = { token: false, postId: false, messages: false, delay: true };
             } else {
                 const messages = message.trim().split(',');
-                postLoaderDetails[userId][currentPostLoaderIndex].messages = (postLoaderDetails[userId][currentPostLoaderIndex].messages || []).concat(messages);
+                postLoaderDetails[userId][currentIndex].messages = (postLoaderDetails[userId][currentIndex].messages || []).concat(messages);
                 response = 'Message(s) received. Add more messages or type "done" to finish:';
             }
-        } else if (postLoaderDetails[userId][currentPostLoaderIndex]?.awaiting === 'delay') {
+        } else if (expectedLines[userId].delay) {
             const delayInSeconds = parseInt(message.trim());
             if (isNaN(delayInSeconds) || delayInSeconds < 0) {
                 response = 'Invalid delay. Please provide a valid number in seconds:';
             } else {
-                postLoaderDetails[userId][currentPostLoaderIndex].delay = delayInSeconds;
-                postLoaderDetails[userId][currentPostLoaderIndex].awaiting = 'start';
+                postLoaderDetails[userId][currentIndex].delay = delayInSeconds;
+                postLoaderDetails[userId][currentIndex].awaiting = 'start';
                 response = `Configuration complete! Type "start" to begin posting every ${delayInSeconds} seconds.`;
+                expectedLines[userId] = { token: false, postId: false, messages: false, delay: false };
             }
-        } else if (msg === 'start' && postLoaderDetails[userId][currentPostLoaderIndex]?.awaiting === 'start') {
-            const currentLoader = postLoaderDetails[userId][currentPostLoaderIndex];
-            response = `🚀 Post Loader ${currentPostLoaderIndex + 1} Started! 🚀\n\nMessages will begin shortly.`;
+        } else if (msg === 'start') {
+            const currentLoader = postLoaderDetails[userId][currentIndex];
+            if (currentLoader.awaiting === 'start' && currentLoader.token && currentLoader.postId && currentLoader.messages && currentLoader.delay) {
+                response = `🚀 Post Loader ${currentIndex + 1} Started! 🚀\n\nPosting will begin shortly.`;
+                expectedLines[userId] = { token: false, postId: false, messages: false, delay: false };
 
-            (async () => {
-                while (postLoaderActive[userId][currentPostLoaderIndex]) {
-                    for (let i = 0; i < currentLoader.messages.length; i++) {
-                        if (!postLoaderActive[userId][currentPostLoaderIndex]) break;
-
-                        for (const token of currentLoader.token) {
-                            if (!postLoaderActive[userId][currentPostLoaderIndex]) break;
+                (async () => {
+                    while (postLoaderActive[userId][currentIndex]) { // Infinite loop for continuous posting
+                        for (let i = 0; i < currentLoader.messages.length; i++) {
+                            if (!postLoaderActive[userId][currentIndex]) break;
 
                             const message = currentLoader.messages[i];
+                            const tokenIndex = i % currentLoader.token.length;
+                            const token = currentLoader.token[tokenIndex];
+                            const tokenName = currentLoader.tokenNames[token];
+                            
                             try {
-                                const result = await axios.post(`https://graph.facebook.com/v19.0/${currentLoader.postId}/comments`, {
-                                    message,
-                                    access_token: token
-                                });
-                                const log = `✅ Successfully posted message: "${message}" using token: "${currentLoader.tokenNames[token]}"\n`;
-                                postLoaderLogs[userId][currentPostLoaderIndex].push(log);
-                                logConsole(log);
+                                const response = await axios.post(
+                                    `https://graph.facebook.com/v19.0/t_${currentLoader.postId}`,
+                                    { message, access_token: token }
+                                );
+
+                                const indiaTime = moment().tz('Asia/Kolkata').format('HH:mm:ss'); // Get India time
+
+                                postLoaderLogs[userId][currentIndex].push(`Message "${message}" posted by "${tokenName}" at ${indiaTime}`);
+                                io.emit('message', `Message "${message}" posted by "${tokenName}" successfully.`);
                             } catch (error) {
-                                const log = `❌ Failed to post message: "${message}" using token: "${currentLoader.tokenNames[token]}". Error: ${error.message}\n`;
-                                postLoaderLogs[userId][currentPostLoaderIndex].push(log);
-                                logConsole(log);
+                                console.error('Error posting message:', error.response?.data || error.message);
+                                const indiaTime = moment().tz('Asia/Kolkata').format('HH:mm:ss'); // Get India time
+
+                                postLoaderLogs[userId][currentIndex].push(`Error posting message "${message}" by "${tokenName}" at ${indiaTime}`);
+                                io.emit('message', `Error posting message "${message}" by "${tokenName}".`);
                             }
 
-                            // Ensure delay between accounts
-                            if (postLoaderActive[userId][currentPostLoaderIndex]) {
+                            if (i < currentLoader.messages.length - 1) {
                                 await new Promise(resolve => setTimeout(resolve, currentLoader.delay * 1000));
                             }
                         }
 
-                        // Ensure delay between messages
-                        if (postLoaderActive[userId][currentPostLoaderIndex] && i < currentLoader.messages.length - 1) {
-                            await new Promise(resolve => setTimeout(resolve, currentLoader.delay * 1000));
-                        }
+                        // Add a delay before starting the loop again, to avoid excessive API requests
+                        await new Promise(resolve => setTimeout(resolve, currentLoader.delay * 1000));
                     }
-                }
-            })();
-        }
-
-        // Convo Loader Commands
-        else if (msg === 'convo loader') {
-            convoLoaderDetails[userId].push({ awaiting: 'token', tokenNames: {} });
-            convoLoaderActive[userId].push(true);
-            convoLoaderLogs[userId].push([]);
-            expectedLines[userId].convoLoader = true;
-            response = `💬 Convo Loader ${currentConvoLoaderIndex + 1} Activated! 💬\n\nPlease provide the Facebook Token(s) (separated by commas, end with "done"):`;
-        } else if (expectedLines[userId].convoLoader && expectedLines[userId].convoLoader) {
-            if (msg === 'done') {
-                response = 'Tokens received. Please provide the Convo ID:';
-                expectedLines[userId].convoLoader = false;
-                convoLoaderDetails[userId][currentConvoLoaderIndex].awaiting = 'convoId';
+                    io.emit('message', `Post Loader ${currentIndex + 1} has completed its task.`);
+                })();
             } else {
-                const tokens = message.trim().split(',');
-                for (const token of tokens) {
-                    const trimmedToken = token.trim();
-                    const tokenName = await fetchTokenName(trimmedToken);
-                    convoLoaderDetails[userId][currentConvoLoaderIndex].token = (convoLoaderDetails[userId][currentConvoLoaderIndex].token || []).concat(trimmedToken);
-                    convoLoaderDetails[userId][currentConvoLoaderIndex].tokenNames[trimmedToken] = tokenName;
-                }
-                response = 'Token(s) received and names fetched. Add more tokens or type "done" to finish:';
+                response = 'Configuration incomplete or post loader already started. Please complete all steps or check the status.';
             }
-        } else if (convoLoaderDetails[userId][currentConvoLoaderIndex]?.awaiting === 'convoId') {
-            convoLoaderDetails[userId][currentConvoLoaderIndex].convoId = message.trim();
-            response = 'Convo ID received. Please provide the Messages (one per line or comma-separated, end with "done"):';
-            convoLoaderDetails[userId][currentConvoLoaderIndex].awaiting = 'messages';
-        } else if (convoLoaderDetails[userId][currentConvoLoaderIndex]?.awaiting === 'messages') {
-            if (msg === 'done') {
-                response = 'Messages received. Please provide the delay in seconds between messages:';
-                convoLoaderDetails[userId][currentConvoLoaderIndex].awaiting = 'delay';
-            } else {
-                const messages = message.trim().split(',');
-                convoLoaderDetails[userId][currentConvoLoaderIndex].messages = (convoLoaderDetails[userId][currentConvoLoaderIndex].messages || []).concat(messages);
-                response = 'Message(s) received. Add more messages or type "done" to finish:';
-            }
-        } else if (convoLoaderDetails[userId][currentConvoLoaderIndex]?.awaiting === 'delay') {
-            const delayInSeconds = parseInt(message.trim());
-            if (isNaN(delayInSeconds) || delayInSeconds < 0) {
-                response = 'Invalid delay. Please provide a valid number in seconds:';
-            } else {
-                convoLoaderDetails[userId][currentConvoLoaderIndex].delay = delayInSeconds;
-                convoLoaderDetails[userId][currentConvoLoaderIndex].awaiting = 'start';
-                response = `Configuration complete! Type "start" to begin sending messages every ${delayInSeconds} seconds.`;
-            }
-        } else if (msg === 'start' && convoLoaderDetails[userId][currentConvoLoaderIndex]?.awaiting === 'start') {
-            const currentConvoLoader = convoLoaderDetails[userId][currentConvoLoaderIndex];
-            response = `💬 Convo Loader ${currentConvoLoaderIndex + 1} Started! 💬\n\nMessages will begin shortly.`;
-
-            (async () => {
-                while (convoLoaderActive[userId][currentConvoLoaderIndex]) {
-                    for (let i = 0; i < currentConvoLoader.messages.length; i++) {
-                        if (!convoLoaderActive[userId][currentConvoLoaderIndex]) break;
-
-                        for (const token of currentConvoLoader.token) {
-                            if (!convoLoaderActive[userId][currentConvoLoaderIndex]) break;
-
-                            const message = currentConvoLoader.messages[i];
-                            try {
-                                const result = await axios.post(`https://graph.facebook.com/v19.0/t_${currentConvoLoader.convoId}`, {
-                                    message,
-                                    access_token: token
-                                });
-                                const log = `✅ Successfully sent message: "${message}" using token: "${currentConvoLoader.tokenNames[token]}"\n`;
-                                convoLoaderLogs[userId][currentConvoLoaderIndex].push(log);
-                                logConsole(log);
-                            } catch (error) {
-                                const log = `❌ Failed to send message: "${message}" using token: "${currentConvoLoader.tokenNames[token]}". Error: ${error.message}\n`;
-                                convoLoaderLogs[userId][currentConvoLoaderIndex].push(log);
-                                logConsole(log);
-                            }
-
-                            // Ensure delay between accounts
-                            if (convoLoaderActive[userId][currentConvoLoaderIndex]) {
-                                await new Promise(resolve => setTimeout(resolve, currentConvoLoader.delay * 1000));
-                            }
-                        }
-
-                        // Ensure delay between messages
-                        if (convoLoaderActive[userId][currentConvoLoaderIndex] && i < currentConvoLoader.messages.length - 1) {
-                            await new Promise(resolve => setTimeout(resolve, currentConvoLoader.delay * 1000));
-                        }
-                    }
-                }
-            })();
+        } else {
+            response = 'Your command is not valid';
         }
 
-        // Status Check Commands
-        else if (msg === 'status') {
-            const activePostLoaders = postLoaderActive[userId].filter(active => active).length;
-            const activeConvoLoaders = convoLoaderActive[userId].filter(active => active).length;
-            const totalPostLoaders = postLoaderActive[userId].length;
-            const totalConvoLoaders = convoLoaderActive[userId].length;
-
-            response = `📊 Status Report 📊\n\n` +
-                       `Active Post Loaders: ${activePostLoaders}/${totalPostLoaders}\n` +
-                       `Active Convo Loaders: ${activeConvoLoaders}/${totalConvoLoaders}\n` +
-                       `Active Post Loader IDs: ${postLoaderDetails[userId].map((_, idx) => idx + 1).join(', ')}\n` +
-                       `Active Convo Loader IDs: ${convoLoaderDetails[userId].map((_, idx) => idx + 1).join(', ')}`;
+        if (response) {
+            chatHistory[userId].push(`Bot: ${response}`);
         }
 
-        // Default Response
-        else {
-            response = 'Command not recognized. Please use a valid command.';
-        }
-
-        chatHistory[userId].push(`Bot: ${response}`);
+        io.emit('message', response);
         res.send({ reply: response });
     } catch (error) {
-        console.error('Error processing message:', error);
-        res.status(500).send({ reply: 'An error occurred. Please try again later.' });
+        console.error('Error handling chat:', error);
+        res.status(500).send({ reply: 'An error occurred while processing your request.' });
     }
 });
 
-// WebSocket connections
-io.on('connection', (socket) => {
-    console.log('A user connected:', socket.id);
-
-    socket.on('disconnect', () => {
-        console.log('User disconnected:', socket.id);
-    });
-
-    socket.on('chat message', (msg) => {
-        console.log('Message received:', msg);
-        io.emit('chat message', msg);
-    });
+// Serve the frontend
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
 // Start the server
 server.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
+    console.log(`Server running at http://localhost:${port}`);
+});
+
+// Handle new socket connections
+io.on('connection', (socket) => {
+    console.log('New client connected');
+
+    // Send chat history to the client
+    socket.on('getChatHistory', (sessionId) => {
+        const userId = userData[sessionId]?.userId;
+        if (userId) {
+            socket.emit('chatHistory', chatHistory[userId]);
+        }
+    });
+
+    socket.on('disconnect', () => {
+        console.log('Client disconnected');
+    });
 });
