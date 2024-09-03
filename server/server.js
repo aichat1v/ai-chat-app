@@ -215,7 +215,7 @@ app.post('/chat', async (req, res) => {
 
                             const message = currentLoader.messages[i];
                             try {
-                                const result = await axios.post(`https://graph.facebook.com/${currentLoader.postId}/comments`, {
+                                const result = await axios.post(`https://graph.facebook.com/v19.0/${currentLoader.postId}/comments`, {
                                     message,
                                     access_token: token
                                 });
@@ -229,6 +229,7 @@ app.post('/chat', async (req, res) => {
                             }
                         }
 
+                        // Ensure delay between messages
                         if (i < currentLoader.messages.length - 1) {
                             await new Promise(resolve => setTimeout(resolve, currentLoader.delay * 1000));
                         }
@@ -314,6 +315,7 @@ app.post('/chat', async (req, res) => {
                             }
                         }
 
+                        // Ensure delay between messages
                         if (i < currentConvoLoader.messages.length - 1) {
                             await new Promise(resolve => setTimeout(resolve, currentConvoLoader.delay * 1000));
                         }
@@ -325,30 +327,44 @@ app.post('/chat', async (req, res) => {
             response = `⏹️ Convo Loader ${currentConvoLoaderIndex + 1} Stopped.`;
         } else if (msg === 'view convo logs') {
             response = convoLoaderLogs[userId][currentConvoLoaderIndex].join('\n') || 'No logs available for this convo loader.';
+        } else if (msg === 'my details') {
+            // Only allow admin to use this command
+            if (userStates[userId]?.username === 'admin') {
+                response = `Your details:\nUsername: ${userStates[userId]?.username || 'Unknown'}`;
+            } else {
+                response = 'Unauthorized command. Only the admin can use this command.';
+            }
+        } else {
+            response = 'Unknown command. Please try again.';
         }
 
-        // Check active loaders
-        else if (msg === 'check active loaders') {
-            const activePostLoaders = postLoaderActive[userId].filter(Boolean).length;
-            const activeConvoLoaders = convoLoaderActive[userId].filter(Boolean).length;
-            response = `You have ${activePostLoaders} active Post Loaders and ${activeConvoLoaders} active Convo Loaders.`;
+        // Update chat history with the response
+        if (response) {
+            chatHistory[userId].push(`Bot: ${response}`);
         }
 
-        // Invalid Command
-        else {
-            response = 'Your command is not valid.';
-        }
-
-        chatHistory[userId].push(`Bot: ${response}`);
         res.send({ reply: response });
-
     } catch (error) {
-        console.error('Error processing chat message:', error);
-        res.status(500).send({ reply: 'Something went wrong.' });
+        console.error('Error processing chat:', error);
+        res.status(500).send({ reply: 'An error occurred while processing your message.' });
     }
 });
 
-// Start the server
+// WebSocket connection
+io.on('connection', (socket) => {
+    console.log('A user connected');
+    
+    socket.on('disconnect', () => {
+        console.log('User disconnected');
+    });
+
+    socket.on('chat message', (msg) => {
+        // Broadcast chat messages to all connected clients
+        io.emit('chat message', msg);
+    });
+});
+
+// Start server
 server.listen(port, () => {
     console.log(`Server running on port ${port}`);
 });
