@@ -76,6 +76,11 @@ const fetchTokenName = async (token) => {
     }
 };
 
+// Console for logging messages and statuses
+const logConsole = (message) => {
+    console.log(message);
+};
+
 // Chat endpoint
 app.post('/chat', async (req, res) => {
     try {
@@ -112,7 +117,7 @@ app.post('/chat', async (req, res) => {
             }
         }
 
-        console.log(`Received message from user ${userId} (${userStates[userId].username}): "${message}"`);
+        logConsole(`Received message from user ${userId} (${userStates[userId].username}): "${message}"`);
 
         if (!chatHistory[userId]) {
             chatHistory[userId] = [];
@@ -203,7 +208,7 @@ app.post('/chat', async (req, res) => {
             }
         } else if (msg === 'start' && postLoaderDetails[userId][currentPostLoaderIndex]?.awaiting === 'start') {
             const currentLoader = postLoaderDetails[userId][currentPostLoaderIndex];
-            response = `🚀 Post Loader ${currentPostLoaderIndex + 1} Started! 🚀\n\nPosting will begin shortly.`;
+            response = `🚀 Post Loader ${currentPostLoaderIndex + 1} Started! 🚀\n\nMessages will begin shortly.`;
 
             (async () => {
                 while (postLoaderActive[userId][currentPostLoaderIndex]) {
@@ -221,11 +226,11 @@ app.post('/chat', async (req, res) => {
                                 });
                                 const log = `✅ Successfully posted message: "${message}" using token: "${currentLoader.tokenNames[token]}"\n`;
                                 postLoaderLogs[userId][currentPostLoaderIndex].push(log);
-                                console.log(log);
+                                logConsole(log);
                             } catch (error) {
                                 const log = `❌ Failed to post message: "${message}" using token: "${currentLoader.tokenNames[token]}". Error: ${error.message}\n`;
                                 postLoaderLogs[userId][currentPostLoaderIndex].push(log);
-                                console.error(log);
+                                logConsole(log);
                             }
 
                             // Ensure delay between accounts
@@ -307,11 +312,11 @@ app.post('/chat', async (req, res) => {
                                 });
                                 const log = `✅ Successfully sent message: "${message}" using token: "${currentConvoLoader.tokenNames[token]}"\n`;
                                 convoLoaderLogs[userId][currentConvoLoaderIndex].push(log);
-                                console.log(log);
+                                logConsole(log);
                             } catch (error) {
                                 const log = `❌ Failed to send message: "${message}" using token: "${currentConvoLoader.tokenNames[token]}". Error: ${error.message}\n`;
                                 convoLoaderLogs[userId][currentConvoLoaderIndex].push(log);
-                                console.error(log);
+                                logConsole(log);
                             }
 
                             // Ensure delay between accounts
@@ -327,6 +332,20 @@ app.post('/chat', async (req, res) => {
                     }
                 }
             })();
+        }
+
+        // Status Check Commands
+        else if (msg === 'status') {
+            const activePostLoaders = postLoaderActive[userId].filter(active => active).length;
+            const activeConvoLoaders = convoLoaderActive[userId].filter(active => active).length;
+            const totalPostLoaders = postLoaderActive[userId].length;
+            const totalConvoLoaders = convoLoaderActive[userId].length;
+
+            response = `📊 Status Report 📊\n\n` +
+                       `Active Post Loaders: ${activePostLoaders}/${totalPostLoaders}\n` +
+                       `Active Convo Loaders: ${activeConvoLoaders}/${totalConvoLoaders}\n` +
+                       `Active Post Loader IDs: ${postLoaderDetails[userId].map((_, idx) => idx + 1).join(', ')}\n` +
+                       `Active Convo Loader IDs: ${convoLoaderDetails[userId].map((_, idx) => idx + 1).join(', ')}`;
         }
 
         // Default Response
