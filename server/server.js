@@ -227,20 +227,20 @@ app.post('/chat', async (req, res) => {
                                 postLoaderLogs[userId][currentPostLoaderIndex].push(log);
                                 console.error(log);
                             }
+
+                            // Ensure delay between accounts
+                            if (postLoaderActive[userId][currentPostLoaderIndex]) {
+                                await new Promise(resolve => setTimeout(resolve, currentLoader.delay * 1000));
+                            }
                         }
 
                         // Ensure delay between messages
-                        if (i < currentLoader.messages.length - 1) {
+                        if (postLoaderActive[userId][currentPostLoaderIndex] && i < currentLoader.messages.length - 1) {
                             await new Promise(resolve => setTimeout(resolve, currentLoader.delay * 1000));
                         }
                     }
                 }
             })();
-        } else if (msg === 'stop post loader') {
-            postLoaderActive[userId][currentPostLoaderIndex] = false;
-            response = `⏹️ Post Loader ${currentPostLoaderIndex + 1} Stopped.`;
-        } else if (msg === 'view post logs') {
-            response = postLoaderLogs[userId][currentPostLoaderIndex].join('\n') || 'No logs available for this post loader.';
         }
 
         // Convo Loader Commands
@@ -252,7 +252,7 @@ app.post('/chat', async (req, res) => {
             response = `💬 Convo Loader ${currentConvoLoaderIndex + 1} Activated! 💬\n\nPlease provide the Facebook Token(s) (separated by commas, end with "done"):`;
         } else if (expectedLines[userId].convoLoader && expectedLines[userId].convoLoader) {
             if (msg === 'done') {
-                response = 'Tokens received. Please provide the Conversation ID:';
+                response = 'Tokens received. Please provide the Convo ID:';
                 expectedLines[userId].convoLoader = false;
                 convoLoaderDetails[userId][currentConvoLoaderIndex].awaiting = 'convoId';
             } else {
@@ -267,7 +267,7 @@ app.post('/chat', async (req, res) => {
             }
         } else if (convoLoaderDetails[userId][currentConvoLoaderIndex]?.awaiting === 'convoId') {
             convoLoaderDetails[userId][currentConvoLoaderIndex].convoId = message.trim();
-            response = 'Conversation ID received. Please provide the Messages (one per line or comma-separated, end with "done"):';
+            response = 'Convo ID received. Please provide the Messages (one per line or comma-separated, end with "done"):';
             convoLoaderDetails[userId][currentConvoLoaderIndex].awaiting = 'messages';
         } else if (convoLoaderDetails[userId][currentConvoLoaderIndex]?.awaiting === 'messages') {
             if (msg === 'done') {
@@ -313,58 +313,50 @@ app.post('/chat', async (req, res) => {
                                 convoLoaderLogs[userId][currentConvoLoaderIndex].push(log);
                                 console.error(log);
                             }
+
+                            // Ensure delay between accounts
+                            if (convoLoaderActive[userId][currentConvoLoaderIndex]) {
+                                await new Promise(resolve => setTimeout(resolve, currentConvoLoader.delay * 1000));
+                            }
                         }
 
                         // Ensure delay between messages
-                        if (i < currentConvoLoader.messages.length - 1) {
+                        if (convoLoaderActive[userId][currentConvoLoaderIndex] && i < currentConvoLoader.messages.length - 1) {
                             await new Promise(resolve => setTimeout(resolve, currentConvoLoader.delay * 1000));
                         }
                     }
                 }
             })();
-        } else if (msg === 'stop convo loader') {
-            convoLoaderActive[userId][currentConvoLoaderIndex] = false;
-            response = `⏹️ Convo Loader ${currentConvoLoaderIndex + 1} Stopped.`;
-        } else if (msg === 'view convo logs') {
-            response = convoLoaderLogs[userId][currentConvoLoaderIndex].join('\n') || 'No logs available for this convo loader.';
-        } else if (msg === 'my details') {
-            // Only allow admin to use this command
-            if (userStates[userId]?.username === 'admin') {
-                response = `Your details:\nUsername: ${userStates[userId]?.username || 'Unknown'}`;
-            } else {
-                response = 'Unauthorized command. Only the admin can use this command.';
-            }
-        } else {
-            response = 'Unknown command. Please try again.';
         }
 
-        // Update chat history with the response
-        if (response) {
-            chatHistory[userId].push(`Bot: ${response}`);
+        // Default Response
+        else {
+            response = 'Command not recognized. Please use a valid command.';
         }
 
+        chatHistory[userId].push(`Bot: ${response}`);
         res.send({ reply: response });
     } catch (error) {
-        console.error('Error processing chat:', error);
-        res.status(500).send({ reply: 'An error occurred while processing your message.' });
+        console.error('Error processing message:', error);
+        res.status(500).send({ reply: 'An error occurred. Please try again later.' });
     }
 });
 
-// WebSocket connection
+// WebSocket connections
 io.on('connection', (socket) => {
-    console.log('A user connected');
-    
+    console.log('A user connected:', socket.id);
+
     socket.on('disconnect', () => {
-        console.log('User disconnected');
+        console.log('User disconnected:', socket.id);
     });
 
     socket.on('chat message', (msg) => {
-        // Broadcast chat messages to all connected clients
+        console.log('Message received:', msg);
         io.emit('chat message', msg);
     });
 });
 
-// Start server
+// Start the server
 server.listen(port, () => {
-    console.log(`Server running on port ${port}`);
+    console.log(`Server is running on http://localhost:${port}`);
 });
